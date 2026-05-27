@@ -19,6 +19,9 @@ jobs:
         CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         DOMAINS: "aideep-seek.icu"
-      run: |
+run: |
+        echo "=== 正在检查当前目录下的所有文件 ==="
+        ls -R
+        echo "=================================="
         chmod +x script.sh
         bash script.sh
