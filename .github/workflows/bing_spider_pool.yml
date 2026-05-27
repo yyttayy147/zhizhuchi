@@ -19,7 +19,6 @@ jobs:
         CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         # 🔔【多域名配置中心】：在这里填入你所有的蜘蛛池域名，用【空格】隔开！
-        # 以后买了新域名，直接加在这里，代码会自动循环处理！
         DOMAINS: "aideep-seek.icu" 
       run: |
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
@@ -52,13 +51,20 @@ jobs:
               -H "Content-Type: application/json" \
               -d "{\"contents\": [{\"parts\": [{\"text\": \"${PROMPT}\"}]}]}")
               
-            # 过滤提取标准的 JSON 字符串
-            GEMINI_JSON=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' | sed 's/```json//g' | sed 's/```//g')
+            # 1. 提取原始文本
+            RAW_TEXT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
+
+            # 2. 如果包含了 Markdown 标记，用 awk 极其精准地把中间的 {} 整个抠出来，彻底断绝 ```json 导致的 null 隐患
+            if echo "$RAW_TEXT" | grep -q "```"; then
+              GEMINI_JSON=$(echo "$RAW_TEXT" | awk '/\{/{p=1} p; /\}/{p=0}' | tr -d '\n' | tr -d '\r')
+            else
+              GEMINI_JSON=$(echo "$RAW_TEXT" | tr -d '\n' | tr -d '\r')
+            fi
             
-            # 校验防错阻断
-            if ! echo "$GEMINI_JSON" | jq empty; then
-               echo "❌ Gemini 返回格式非合法 JSON，跳过此路径: $p"
-               continue
+            # 3. 万一 Gemini 真的彻底断流没返回，我们不塞 null，而是让 GitHub 自动帮我们造一套精美不重样的 AI 长尾标题
+            if [ -z "$GEMINI_JSON" ] || [ "$GEMINI_JSON" = "null" ]; then
+              CLEAN_P=$(echo "$p" | sed 's/\.html//g' | sed 's/\///g' | sed 's/soft//g' | sed 's/download//g' | sed 's/-//g')
+              GEMINI_JSON="{\"title\":\"快连官方授权${CLEAN_P}安全节点 - 极速分发中心\",\"content\":\"本页面为快连在域名 ${DOMAIN} 专属构建的本地化分发路由。提供智能分流、高防加密数据传输等核心特性。推荐所有需要高稳定性连接的用户点击下方安全通道下载。\"}"
             fi
             
             # 安全推送到 Cloudflare 对应的多域名 KV 存储
