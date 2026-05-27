@@ -19,7 +19,7 @@ jobs:
         CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         # 🔔【多域名配置区】：在这里填入你所有的泛域名，用空格隔开即可，未来加域名只需在这里追加！
-        DOMAINS: "v2rayng-cn.net clash-for.com youdaocn-cn.com letsv-vpn.com" 
+        DOMAINS: "aideep-seek.icu" 
       run: |
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
         
