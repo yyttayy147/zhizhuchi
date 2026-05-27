@@ -1,0 +1,86 @@
+name: Gemini Content Generator & Bing IndexNow Push
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 每天北京时间早上 9:00 全自动触发
+  workflow_dispatch: # 支持你在 GitHub 页面上手动点击测试运行
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Generate Content & Push to Cloudflare + Bing
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+        CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        # 🔔【多域名配置区】：在这里填入你所有的泛域名，用空格隔开即可，未来加域名只需在这里追加！
+        DOMAINS: "v2rayng-cn.net clash-for.com youdaocn-cn.com letsv-vpn.com" 
+      run: |
+        read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
+        
+        # 80 套伪静态结构种子路由 (结合多域名和动态内容可发散至上百套页面体系)
+        PATHS=(
+          "/soft/kuailian-v2.8.5.html" 
+          "/download/kuailian-ios-latest.html" 
+          "/review/kuailian-speed-test.html" 
+          "/setup/how-to-install-kuailian-android.html" 
+          "/news/kuailian-update-2026.html"
+          "/app/kuailian-free-download.html"
+          "/soft/kuailian-v2.8.6.html"
+          "/download/kuailian-mac-latest.html"
+          "/review/kuailian-ping-test.html"
+          "/setup/how-to-install-kuailian-ios.html"
+        )
+        
+        KEY="bingpoolsecretkey1234567890"
+
+        for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
+          echo "🚀 正在处理域名: $DOMAIN"
+          URL_LIST=""
+          
+          for p in "${PATHS[@]}"; do
+            # 建立针对当前域名和长尾词的专属 Prompt 喂给 Gemini
+            PROMPT="你是一个专门做软件下载站的 SEO 专家。请针对关键词'快连VPN'，为路径为 ${p} 且域名为 ${DOMAIN} 的网页生成内容。要求：1. 撰写一个极具吸引力且包含长尾词（如：快连最新版下载、快连加速工具评测）的标题。2. 撰写一段大约 200 字左右的软件介绍或版本更新日志。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记（不要包含 \`\`\`json 开头），JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}"
+            
+            RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"contents\": [{\"parts\": [{\"text\": \"${PROMPT}\"}]}]}")
+              
+            # 提取 AI 返回数据并过滤可能夹带的 Markdown 符号
+            GEMINI_JSON=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' | sed 's/```json//g' | sed 's/```//g')
+            
+            # 校验 JSON 格式合法性
+            if ! echo "$GEMINI_JSON" | jq empty; then
+               echo "❌ Gemini 返回格式有误，跳过此页面"
+               continue
+            fi
+            
+            # 存储到 Cloudflare KV
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${DOMAIN}_${p}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              -d "$GEMINI_JSON"
+              
+            URL_LIST="${URL_LIST}\"https://${DOMAIN}${p}\","
+          done
+          
+          URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
+
+          # 触发 Bing IndexNow 引擎主动抓取通知
+          curl -s -X POST "https://api.indexnow.org/IndexNow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "{
+              \"host\": \"${DOMAIN}\",
+              \"key\": \"${KEY}\",
+              \"keyLocation\": \"https://${DOMAIN}/${KEY}.txt\",
+              \"urlList\": [${URL_LIST}]
+            }"
+          
+          echo "✅ 域名 $DOMAIN 内容更新并成功推送至 IndexNow！"
+          echo "--------------------------------------------"
+        done
