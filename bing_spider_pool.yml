@@ -1,86 +1,189 @@
-name: Gemini Content Generator & Bing IndexNow Push
+// ==================== 1. 核心极简配置区 ====================
+const CONFIG = {
+  // 你需要引流的“快连下载”外链列表（轮询随机下发，想加多少加多少，末尾记得加逗号）
+  targetLinks: [
+    "https://your-kuailian-link1.com/download?aff=123",
+    "https://your-kuailian-link2.com/track?sid=abc"
+  ],
+  // 管理员测试白名单密码
+  testToken: "mytoken", 
+  
+  // 用于 Bing IndexNow 验证的密钥（须与 GitHub Actions 脚本中的 KEY 保持一致）
+  indexNowKey: "bingpoolsecretkey1234567890"
+};
 
-on:
-  schedule:
-    - cron: '0 1 * * *' # 每天北京时间早上 9:00 全自动触发
-  workflow_dispatch: # 支持你在 GitHub 页面上手动点击测试运行
+// ==================== 2. 主程序核心逻辑 ====================
+export default {
+  async fetch(request, env, ctx) {
+    // 💡 终极安全防线：全包围 Try-Catch，确保 Worker 内部发生任何未知错误时，
+    // 绝对不向浏览器抛出 Exception，而是强行拦截并吐出正常的网页，彻底封死 1101 报错！
+    try {
+      const url = new URL(request.url);
+      const userAgent = request.headers.get("user-agent") || "";
 
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+      // 1️⃣ 优先放行 IndexNow 密钥验证（收录提交验证文件）
+      if (url.pathname === `/${CONFIG.indexNowKey}.txt`) {
+        return new Response(CONFIG.indexNowKey, { headers: { "content-type": "text/plain" } });
+      }
 
-    - name: Generate Content & Push to Cloudflare + Bing
-      env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
-        CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        # 🔔【多域名配置区】：在这里填入你所有的泛域名，用空格隔开即可，未来加域名只需在这里追加！
-        DOMAINS: "v2rayng-cn.net clash-for.com youdaocn-cn.com letsv-vpn.com" 
-      run: |
-        read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
-        
-        # 80 套伪静态结构种子路由 (结合多域名和动态内容可发散至上百套页面体系)
-        PATHS=(
-          "/soft/kuailian-v2.8.5.html" 
-          "/download/kuailian-ios-latest.html" 
-          "/review/kuailian-speed-test.html" 
-          "/setup/how-to-install-kuailian-android.html" 
-          "/news/kuailian-update-2026.html"
-          "/app/kuailian-free-download.html"
-          "/soft/kuailian-v2.8.6.html"
-          "/download/kuailian-mac-latest.html"
-          "/review/kuailian-ping-test.html"
-          "/setup/how-to-install-kuailian-ios.html"
-        )
-        
-        KEY="bingpoolsecretkey1234567890"
+      // 2️⃣ 安全与测试验证逻辑
+      const isBingBot = userAgent.toLowerCase().includes("bingbot");
+      const isTest = url.searchParams.get("test") === CONFIG.testToken;
+      // 万能测试开关：只要网址中包含 test 四个字母，一律判定为管理员在调测，不予拦截！
+      const isAnyTest = url.search().toLowerCase().includes("test");
 
-        for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
-          echo "🚀 正在处理域名: $DOMAIN"
-          URL_LIST=""
+      // 严格隔离：不是 Bing 蜘蛛，也不是管理员测试，全部吐 404
+      if (!isBingBot && !isTest && !isAnyTest) {
+        return new Response("404 Not Found", { status: 404 });
+      }
+
+      // 3️⃣ 统计逻辑：记录 Bing 蜘蛛抓取次数（带隔离防线，报错不中断）
+      if (isBingBot) {
+        ctx.waitUntil((async () => {
+          try {
+            if (env && env.SPIDER_STATS_KV) {
+              const today = new Date().toISOString().split('T')[0];
+              const statKey = `bing_${today}_${url.hostname}`;
+              const currentCount = parseInt(await env.SPIDER_STATS_KV.get(statKey) || "0");
+              await env.SPIDER_STATS_KV.put(statKey, (currentCount + 1).toString());
+            }
+          } catch(e) {
+            // 即使 KV 写入失败也静默退出，不给平台爆 1101 的机会
+          }
+        })());
+      }
+
+      // 4️⃣ 后台入口：爬虫访问统计面板
+      if (url.pathname === "/spider-dashboard-view" && (isTest || isAnyTest)) {
+        return await renderDashboard(env.SPIDER_STATS_KV, url.hostname);
+      }
+
+      // 5️⃣ 内容数据准备（默认先用优质 SEO 词库进行绝对安全的初始化）
+      let contentData = { 
+        title: "快连官方最新版下载 - 2026全平台安全安装包", 
+        content: "欢迎来到官方软件分发中心。快连客户端已通过全方位的安全防护认证，保障您的连接稳定与隐私安全。点击下方按钮即可前往最新正版安全下载通道。" 
+      };
+
+      // 从 KV 数据库中安全提取数据并动态解包
+      if (env && env.SPIDER_STATS_KV) {
+        try {
+          // 💡 核心对齐：精准补齐斜杠前缀，完美匹配 GitHub 塞进来的 Key 格式
+          const cleanPath = url.pathname.startsWith('/') ? url.pathname : '/' + url.pathname;
+          const targetKey = `content_${url.hostname}${cleanPath}`;
           
-          for p in "${PATHS[@]}"; do
-            # 建立针对当前域名和长尾词的专属 Prompt 喂给 Gemini
-            PROMPT="你是一个专门做软件下载站的 SEO 专家。请针对关键词'快连VPN'，为路径为 ${p} 且域名为 ${DOMAIN} 的网页生成内容。要求：1. 撰写一个极具吸引力且包含长尾词（如：快连最新版下载、快连加速工具评测）的标题。2. 撰写一段大约 200 字左右的软件介绍或版本更新日志。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记（不要包含 \`\`\`json 开头），JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}"
+          const rawKvData = await env.SPIDER_STATS_KV.get(targetKey);
+          if (rawKvData && rawKvData !== "null") {
+            const geminiResponse = JSON.parse(rawKvData);
             
-            RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "{\"contents\": [{\"parts\": [{\"text\": \"${PROMPT}\"}]}]}")
-              
-            # 提取 AI 返回数据并过滤可能夹带的 Markdown 符号
-            GEMINI_JSON=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' | sed 's/```json//g' | sed 's/```//g')
-            
-            # 校验 JSON 格式合法性
-            if ! echo "$GEMINI_JSON" | jq empty; then
-               echo "❌ Gemini 返回格式有误，跳过此页面"
-               continue
-            fi
-            
-            # 存储到 Cloudflare KV
-            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${DOMAIN}_${p}" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              -d "$GEMINI_JSON"
-              
-            URL_LIST="${URL_LIST}\"https://${DOMAIN}${p}\","
-          done
-          
-          URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
+            // 分流处理 A：如果是本地兜底引擎生成的，它本身就是干净的目标 JSON
+            if (geminiResponse.title || geminiResponse.content) {
+              contentData = geminiResponse;
+            } 
+            // 分流处理 B：如果是 Gemini 2.5 返回的原生大 JSON 响应，进入 Workers 高级清洗流
+            else if (geminiResponse.candidates && geminiResponse.candidates[0]) {
+              let aiText = geminiResponse.candidates[0].content.parts[0].text;
+              if (aiText) {
+                // 精准剔除多余的 Markdown 符号
+                aiText = aiText.replace(/```json/gi, '').replace(/```/g, '').trim();
+                const cleanJson = JSON.parse(aiText);
+                if (cleanJson && (cleanJson.title || cleanJson.content)) {
+                  contentData = cleanJson;
+                }
+              }
+            }
+          }
+        } catch(e) {
+          // KV 读取或 JSON 解析发生任何异常时，直接静默，无缝走上面准备好的安全兜底数据
+        }
+      }
 
-          # 触发 Bing IndexNow 引擎主动抓取通知
-          curl -s -X POST "https://api.indexnow.org/IndexNow" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d "{
-              \"host\": \"${DOMAIN}\",
-              \"key\": \"${KEY}\",
-              \"keyLocation\": \"https://${DOMAIN}/${KEY}.txt\",
-              \"urlList\": [${URL_LIST}]
-            }"
-          
-          echo "✅ 域名 $DOMAIN 内容更新并成功推送至 IndexNow！"
-          echo "--------------------------------------------"
-        done
+      // 随机获取一个安全引流外链
+      let randomLink = "https://your-kuailian-link1.com";
+      if (CONFIG.targetLinks && CONFIG.targetLinks.length > 0) {
+        randomLink = CONFIG.targetLinks[Math.floor(Math.random() * CONFIG.targetLinks.length)];
+      }
+
+      // 完美输出百变页面
+      return renderHtmlPage(url.pathname, contentData, randomLink);
+
+    } catch (globalError) {
+      // 🚨 万一发生任何未知的代码级终极崩溃，这里是最后防线：直接强行吐出标准的下载页面，彻底干掉 1101！
+      return new Response(`
+      <!DOCTYPE html><html><head><meta charset="UTF-8"><title>快连官方最新版下载 - 2026全平台安全安装包</title><style>body{font-family:sans-serif;padding:30px;background:#f8f9fa;} .container{max-width:700px;margin:50px auto;background:#fff;padding:30px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.05);} h1{color:#007bff;} .btn{display:inline-block;padding:12px 30px;background:#28a745;color:#fff;text-decoration:none;border-radius:5px;font-weight:bold;margin-top:20px;}</style></head>
+      <body><div class="container"><h1>快连官方最新版下载 - 2026全平台安全安装包</h1><div style="font-size:16px;line-height:1.8;color:#555;margin:20px 0;border-left:4px solid #007bff;padding-left:15px;">欢迎来到官方软件分发中心。快连客户端已通过全方位的安全防护认证，保障您的连接稳定与隐私安全。点击下方按钮即可前往最新正版安全下载通道。</div><center><a href="${CONFIG.targetLinks[0]}" class="btn" rel="nofollow">立即获取正版官方下载通道</a></center></div></body></html>`, { headers: { "content-type": "text/html;charset=UTF-8" } });
+    }
+  }
+};
+
+// ==================== 3. 动态下载站 HTML 渲染引擎 ====================
+function renderHtmlPage(path, data, targetLink) {
+  const safeTitle = (data && data.title) ? data.title : "快连官方最新版下载 - 2026全平台安全安装包";
+  const safeContent = (data && data.content) ? data.content : "欢迎来到官方软件分发中心。快连客户端已通过全方位的安全防护认证，保障您的连接稳定与隐私安全。点击下方按钮即可前往最新正版安全下载通道。";
+
+  const html = `
+  <!DOCTYPE html>
+  <html lang="zh-CN">
+  <head>
+      <meta charset="UTF-8">
+      <title>${safeTitle}</title>
+      <meta name="keywords" content="快连最新版下载, 快连 iOS 客户端官方安装包, 快连 Android 安装包, 快连加速工具评测">
+      <meta name="description" content="${safeTitle}官方发布页，提供最全的快连加速器全平台客户端下载。">
+      <style>
+          body { font-family: -apple-system, sans-serif; padding: 30px; background: #f8f9fa; color: #333; }
+          .container { max-width: 700px; margin: 50px auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+          h1 { color: #007bff; font-size: 24px; margin-bottom: 20px; line-height: 1.4; }
+          .content { font-size: 16px; line-height: 1.8; color: #555; margin: 20px 0; border-left: 4px solid #007bff; padding-left: 15px; }
+          .btn { display: inline-block; padding: 14px 35px; background: #28a745; color: #fff; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 20px; font-size: 16px; box-shadow: 0 4px 10px rgba(40,167,69,0.3); }
+          .btn:hover { background: #218838; }
+      </style>
+  </head>
+  <body>
+      <div class="container">
+          <h1>${safeTitle}</h1>
+          <p style="color:#999; font-size:12px;">发布时间: ${new Date().toLocaleDateString()} | 软件状态：已通过官方安全加固</p>
+          <div class="content">${safeContent}</div>
+          <div style="text-align: center;"><a href="${targetLink}" class="btn" rel="nofollow">立即获取正版官方下载通道</a></div>
+      </div>
+  </body>
+  </html>`;
+  
+  return new Response(html, { headers: { "content-type": "text/html;charset=UTF-8" } });
+}
+
+// ==================== 4. 爬虫访问可视化面板 ====================
+async function renderDashboard(kv, hostname) {
+  let statsHtml = "<tr><td colspan='3' style='padding:15px;text-align:center;color:#999;'>暂无今日统计数据</td></tr>";
+  if (kv) {
+    try {
+      const list = await kv.list({ prefix: `bing_` });
+      if (list.keys.length > 0) {
+        statsHtml = "";
+        for (const key of list.keys.reverse()) {
+          const val = await kv.get(key.name);
+          const parts = key.name.split('_');
+          const date = parts[1] || "";
+          const domain = parts[2] || "";
+          statsHtml += `<tr style="border-bottom:1px solid #eee;"><td style="padding:12px 10px;">${date}</td><td style="padding:12px 10px;color:#007bff;">${domain}</td><td style="padding:12px 10px;font-weight:bold;color:#28a745;">${val} 次</td></tr>`;
+        }
+      }
+    } catch(e) {
+      statsHtml = "<tr><td colspan='3' style='padding:15px;text-align:center;color:red;'>读取统计失败</td></tr>";
+    }
+  }
+  
+  return new Response(`
+  <html>
+  <head><title>🕷️ 蜘蛛池监控面板</title></head>
+  <body style="font-family:sans-serif; background:#f4f6f9; padding:30px;">
+    <div style="max-width:800px; margin:0 auto; background:#fff; padding:25px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+      <h2>🕷️ 必应（Bingbot）蜘蛛实时抓取监控面板</h2>
+      <table style="width:100%; border-collapse:collapse; text-align:left;">
+        <thead style="background:#f8f9fa; border-bottom:2px solid #ddd;">
+          <tr><th style="padding:10px;">抓取日期</th><th style="padding:10px;">目标域名</th><th style="padding:10px;">真蜘蛛请求量</th></tr>
+        </thead>
+        <tbody>${statsHtml}</tbody>
+      </table>
+    </div>
+  </body>
+  </html>`, { headers: { "content-type": "text/html;charset=UTF-8" } });
+}
