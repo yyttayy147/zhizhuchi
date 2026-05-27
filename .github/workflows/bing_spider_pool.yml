@@ -2,7 +2,7 @@ name: Gemini Content Generator & Bing IndexNow Push
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 jobs:
@@ -12,74 +12,13 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Generate Content & Push to Cloudflare + Bing
+    - name: Run Spider Pool Script
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        DOMAINS: "aideep-seek.icu" 
+        DOMAINS: "aideep-seek.icu"
       run: |
-        read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
-        
-        PATHS=(
-          "/soft/kuailian-v2.8.5.html" 
-          "/download/kuailian-ios-latest.html" 
-          "/review/kuailian-speed-test.html" 
-          "/setup/how-to-install-kuailian-android.html" 
-          "/news/kuailian-update-2026.html"
-          "/app/kuailian-free-download.html"
-          "/soft/kuailian-v2.8.6.html"
-          "/download/kuailian-mac-latest.html"
-          "/review/kuailian-ping-test.html"
-          "/setup/how-to-install-kuailian-ios.html"
-        )
-        
-        KEY="bingpoolsecretkey1234567890"
-
-        for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
-          echo "Processing domain: $DOMAIN"
-          URL_LIST=""
-          
-          for p in "${PATHS[@]}"; do
-            PROMPT="你是一个专门做软件下载站的 SEO 专家。请针对关键词 快连VPN ，为路径为 ${p} 且域名为 ${DOMAIN} 的网页生成内容。要求：1. 撰写一个极具吸引力且包含长尾词如快连最新版下载、快连加速工具评测的标题。2. 撰写一段大约 200 字左右的软件介绍或版本更新日志。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}"
-            
-            RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "{\"contents\": [{\"parts\": [{\"text\": \"${PROMPT}\"}]}]}")
-              
-            RAW_TEXT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
-
-            if echo "$RAW_TEXT" | grep -q "```"; then
-              GEMINI_JSON=$(echo "$RAW_TEXT" | awk '/\{/{p=1} p; /\}/{p=0}' | tr -d '\n' | tr -d '\r')
-            else
-              GEMINI_JSON=$(echo "$RAW_TEXT" | tr -d '\n' | tr -d '\r')
-            fi
-            
-            if [ -z "$GEMINI_JSON" ] || [ "$GEMINI_JSON" = "null" ]; then
-              CLEAN_P=$(echo "$p" | sed 's/\.html//g' | sed 's/\///g' | sed 's/soft//g' | sed 's/download//g' | sed 's/-//g')
-              GEMINI_JSON="{\"title\":\"快连官方授权${CLEAN_P}安全节点 - 极速分发中心\",\"content\":\"本页面为快连在域名 ${DOMAIN} 专属构建的本地化分发路由。提供智能分流、高防加密数据传输等核心特性。推荐所有需要高稳定性连接的用户点击下方安全通道下载。\"}"
-            fi
-            
-            curl -s -X PUT "[https://api.cloudflare.com/client/v4/accounts/$](https://api.cloudflare.com/client/v4/accounts/$){CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${DOMAIN}_${p}" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              -d "$GEMINI_JSON"
-              
-            URL_LIST="${URL_LIST}\"https://${DOMAIN}${p}\","
-          done
-          
-          URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
-
-          curl -s -X POST "[https://api.indexnow.org/IndexNow](https://api.indexnow.org/IndexNow)" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d "{
-              \"host\": \"${DOMAIN}\",
-              \"key\": \"${KEY}\",
-              \"keyLocation\": \"https://${DOMAIN}/${KEY}.txt\",
-              \"urlList\": [${URL_LIST}]
-            }"
-          
-          echo "✅ Done for $DOMAIN"
-          echo "--------------------------------------------------------"
-        done
+        chmod +x script.sh
+        bash script.sh
