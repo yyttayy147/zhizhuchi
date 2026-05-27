@@ -1,9 +1,9 @@
-name: Gemini 2.5 Super Spider Pool Core
+name: Gemini 2.5 Multi-Domain Spider Pool Cluster
 
 on:
   schedule:
-    - cron: "0 1 * * *" # 每天北京时间早上 9:00 全自动轮询更新
-  workflow_dispatch: # 支持管理员在 Actions 后台手动一键触发运行
+    - cron: "0 14 * * *" # 🚀 核心优化：精准对齐北京时间每天晚上 22:00 全自动触发
+  workflow_dispatch: # 支持管理员在 Actions 后台随时随时「手动一键触发」强行推送
 
 jobs:
   brain-sync:
@@ -18,15 +18,16 @@ jobs:
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        # 🔔 在 GitHub Secrets 里配置 DOMAINS，支持多域名，用空格分隔。例："site1.com site2.net site3.xyz"
+        # 🔔 在 GitHub Secrets 里配置 TARGET_DOMAINS，用空格隔开。
+        # 例如："mixdvr.com kuailian--1.com kuailian-app.cc kuailian-pc.vip kuailian-cn.vip kuai-lian.xyz"
         DOMAINS: ${{ secrets.TARGET_DOMAINS }}
-        # 在 GitHub Secrets 里配置 BING_INDEXNOW_KEY，如 "bingsecret123456"
+        # 在 GitHub Secrets 里配置 BING_INDEXNOW_KEY，如 "bingpoolsecretkey1234567890"
         INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
       run: |
         # 将域名拆分为 Linux 数组
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
         
-        # 10 套黄金垂直伪静态路径种子（配合 Workers 内部的 8 套排版主题，将排列组合裂变为 80 套完全不同的独立渲染模板）
+        # 10 套黄金垂直伪静态路径种子
         PATHS=(
           "/soft/kuailian-v2.8.5.html"
           "/download/kuailian-ios-latest.html"
@@ -41,14 +42,14 @@ jobs:
         )
 
         for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
-          echo "🌐 正在全力处理多域名分布式节点: $DOMAIN"
+          echo "🌐 正在全力处理分布式矩阵域名节点: $DOMAIN"
           URL_LIST=""
           
           for p in "${PATHS[@]}"; do
-            echo "🤖 正在召唤 Gemini 2.5 构筑长尾内容: $p"
+            echo "🤖 正在召唤 Gemini 2.5 构筑高纯度垂直语料: $p"
             
-            # 使用 jq 封装纯净的 Prompt 传输体，彻底封死单双引号溢出崩溃的隐患
-            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$DOMAIN" '{contents: [{parts: [{text: ("你是一个专业的企业软件技术文档工程师。请针对网络加速与客户端连通性服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的产品介绍。要求：1. 撰写一个包含长尾词（如：客户端官方正版安装、安全稳定性评测、最新版本发布日志）的行业深度品牌标题。2. 撰写一段大约 350 字左右的产品架构介绍、多端配置指南或网络性能调优日志。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
+            # 🎯 核心优化：利用 jq 重构 Prompt。命令 AI 必须死死咬住“快连VPN/letsvpn/快连下载/快连官网”进行 500-2000 字长文输出，切除所有对 SEO 不利的敏感特征词。
+            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$DOMAIN" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南、多中继备份机制评测或高可用分发日志。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 骨架结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
             
             RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
               -H "Content-Type: application/json" \
@@ -58,29 +59,28 @@ jobs:
             CHECK_VALID=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
             
             if [ -z "$CHECK_VALID" ] || [ "$CHECK_VALID" = "null" ]; then
-              echo "⚠️ Gemini 接口本轮限频或无响应，启动脚本底层本地备份引擎进行高级 TDK 填充..."
-              CLEAN_P=$(echo "$p" | sed 's/\.html//g' | sed 's/\///g' | sed 's/soft//g' | sed 's/download//g' | sed 's/-//g' | sed 's/review//g' | sed 's/setup//g')
-              RESPONSE="{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{\\\"title\\\":\\\"官方正版安全接入端 ${CLEAN_P} - 多链路高防分发网关\\\",\\\"content\\\":\\\"欢迎访问部署于分布式边缘节点 ${DOMAIN} 的企业级客户端软件发布服务中心。本板块针对网络边缘加速、连通性性能指标以及多端配置环境进行了深度的稳定性加固。系统提供多条智能高防中继链路，保障终端用户的数据在传输过程中的隐私安全与连通稳定性。\\\"}\"}]}}]}}"
+              echo "⚠️ Gemini 接口本轮限频或无响应，启动脚本底层本地备份引擎进行高级加固填充..."
+              RESPONSE="{\"title\":\"官方正版安全接入通道 - 全平台高防分发中心\",\"content\":\"欢迎访问部署于分布式边缘节点 ${DOMAIN} 的企业级软件发布服务中心。本板块针对网络边缘加速、连通性性能指标以及多端配置环境进行了深度的稳定性加固。系统提供多条智能高防中继链路，保障终端用户在传输过程中的隐私安全与连通稳定性。\"}"
             fi
             
-            # 将原始完整 JSON 数据包无损坏写入 CF KV 数据库
+            # 将原始无损 JSON 数据包砸入 Cloudflare KV 数据库
             curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${DOMAIN}_${p}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: text/plain" \
               -d "$RESPONSE"
               
             URL_LIST="${URL_LIST}\"https://${DOMAIN}${p}\","
-            sleep 3 # 强制让每次请求呼吸 3 秒，防免费版 API 频率报警
+            sleep 4 # 每次请求呼吸 4 秒，彻底封死免费版 API 的每分钟频控（RPM）报警
           done
           
           # 清理 URL 字符串尾部多余的逗号
           URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
 
-          # 调用必应 IndexNow 官方高速收录引擎，将海量页面直接注入必应爬虫序列
+          # 🚀 联合推送：调用必应 IndexNow 官方高速引擎，把该大域下刚更新的 10 个黄金全路径一键推送
           curl -s -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \
             -d "{\"host\": \"${DOMAIN}\", \"key\": \"${INDEXNOW_KEY}\", \"keyLocation\": \"https://${DOMAIN}/${INDEXNOW_KEY}.txt\", \"urlList\": [${URL_LIST}]}"
           
-          echo "🚀 已成功将域名 $DOMAIN 的伪静态内容推送到必应 IndexNow 数据流！"
+          echo "🚀 已成功将域名 $DOMAIN 的 10 套伪静态最新 URL 推送到必应 IndexNow 数据流！"
           echo "--------------------------------------------------------"
         done
