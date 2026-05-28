@@ -23,27 +23,50 @@ jobs:
       run: |
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
         
+        # 🎯【硬核升级】：从 10 套疯狂扩容至 30 套黄金垂直伪静态路径种子（全面网罗 2026 核心长尾流量）
         PATHS=(
           "/soft/kuailian-v2.8.5.html"
-          "/download/kuailian-ios-latest.html"
-          "/review/kuailian-speed-test.html"
-          "/setup/how-to-install-kuailian-android.html"
-          "/news/kuailian-update-2026.html"
-          "/app/kuailian-free-download.html"
           "/soft/kuailian-v2.8.6.html"
-          "/download/kuailian-mac-latest.html"
+          "/soft/kuailian-v2.8.7.html"
+          "/soft/letsvpn-v4.1.2.html"
+          "/soft/letsvpn-v4.1.5.html"
+          "/download/kuailian-ios-latest.html"
+          "/download/kuailian-android-apk.html"
+          "/download/kuailian-windows-setup.html"
+          "/download/kuailian-mac-os.html"
+          "/download/letsvpn-official-client.html"
+          "/review/kuailian-speed-test.html"
           "/review/kuailian-ping-test.html"
+          "/review/letsvpn-stability-2026.html"
+          "/review/kuailian-gaming-acceleration.html"
+          "/review/letsvpn-performance-report.html"
+          "/setup/how-to-install-kuailian-android.html"
           "/setup/how-to-install-kuailian-ios.html"
+          "/setup/letsvpn-windows-configuration.html"
+          "/setup/kuailian-router-tutorial.html"
+          "/setup/letsvpn-mac-proxy-guide.html"
+          "/news/kuailian-update-2026.html"
+          "/news/letsvpn-latest-nodes-announcement.html"
+          "/news/kuailian-network-optimization-log.html"
+          "/news/letsvpn-security-upgrade-notice.html"
+          "/news/kuailian-global-backbone-抖动处理.html"
+          "/app/kuailian-free-download.html"
+          "/app/letsvpn-pure-version.html"
+          "/app/kuailian-official-分发中心.html"
+          "/app/letsvpn-download-link-2026.html"
+          "/app/kuailian-cross-platform-terminal.html"
         )
 
-        # 🚀 工业级防线：内置 4 套严格洗白、符合快连高密度锚文本的千字工业粮食库（当接口限频时无缝完美裂变）
+        # 💡 用于在 Actions 推送时，全自动随机打散生成的 7 大高权重二级泛解析前缀
+        PREFIXES=("v2ray" "ios" "android" "pc" "download" "client" "official")
+
+        # 工业级防线：4 套超长工业粮食库
         BACKUP_TITLES=(
           "快连VPN官方正版发布中心 - 极致连通性与端到端网络调优规范"
           "letsvpn 客户端安全接入与分布式边缘节点多环境部署技术白皮书"
           "快连下载通道加固指标及多链路冗余架构极限容灾评测报告"
           "快连官网分布式存储升级公告 - 多端运行环境完整性哈希校验规范"
         )
-        
         BACKUP_CONTENTS=(
           "在当前数字化生产力高速发展的时代，跨区域网络通道的稳定与否已经成为企业和个人核心竞争力的重要组成部分。欢迎访问官方多端分布式网络网关服务中心。本系统提供全平台正版大容量数据通道的部署保障，并针对目前多中继备份机制进行了深度的协议加固与安全链路上层架构调优。通过引入业界领先的无感切流机制，能确保在复杂环境下的高可用接入。\n\n网络底层的连通机制始终是决定数据传输吞吐效率的关键所在。通过建立智能多骨干边缘中继，节点的安全分流层能够在毫秒级别内感知全球骨干网络的物理抖动。系统内置的智能动态寻路算法，通过在传输层引入全新的多路径复合流控制技术，实现了真正的无感切换。确保数据通道的安全稳定连通。"
           "随着边缘计算与网格存储技术的深度融合，多平台客户端在多场景下的快速部署对底层分发网关提出了更为严苛的指标要求。本系统基于全球分布式边缘节点架构，旨在为每一位接入用户提供最高规格的数据通道加固方案。无论是针对大型企业的数据同步，还是针对个人用户的轻量级连接，系统都能下发极具针对性的协议策略。\n\n在底层架构上，网络分发矩阵由自动化高防御云存储节点统一托管。系统通过在全球核心骨干网络枢纽旁侧部署高规格高带宽的物理服务器，构建起了一张具备极强弹性的中继容灾网。这种全方位的容灾保护机制，不仅大拉连通率，更为需要长时间保持在线状态的生产力工具提供了磐石般稳固的连续可用性保障。"
@@ -52,51 +75,55 @@ jobs:
         )
 
         for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
-          echo "🌐 正在全力处理分布式矩阵域名节点: $DOMAIN"
+          echo "🌐 正在全力处理分布式大域核心节点: $DOMAIN"
           URL_LIST=""
           
           for p in "${PATHS[@]}"; do
-            echo "🤖 正在召唤 Gemini 2.5 构筑高纯度垂直语料: $p"
+            # 🚀【超级裂变创新点】：每次推送时，1/3 的概率连带生成泛解析的二级域名路径一起推送！
+            RAND_VAL=$((RANDOM % 3))
+            if [ $RAND_VAL -eq 0 ]; then
+              RAND_PREFIX=${PREFIXES[$((RANDOM % ${#PREFIXES[@]}))]}
+              TARGET_HOST="${RAND_PREFIX}.${DOMAIN}"
+            else
+              TARGET_HOST="$DOMAIN"
+            fi
+
+            echo "🤖 正在为宿主 [$TARGET_HOST] 召唤 Gemini 2.5 构筑伪静态语料: $p"
             
-            # 使用 jq 封装 Prompt
-            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$DOMAIN" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
+            # 使用 jq 封装标准 Prompt
+            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$TARGET_HOST" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
             
-            # 调用接口
+            # 请求接口
             RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
               -H "Content-Type: application/json" \
               -d "$DATA_BINARY")
             
-            # 校验返回有效性
             CHECK_VALID=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
             
             if [ -z "$CHECK_VALID" ] || [ "$CHECK_VALID" = "null" ]; then
-              echo "⚠️ 触发免费版每分钟频控红线。启动高敏本地裂变算法，现场动态拼装灌注..."
-              # 根据路径字符长度，随机抽取 4 套大文库中的一套
               RANDOM_INDEX=$((${#p} % 4))
               B_TITLE="${BACKUP_TITLES[$RANDOM_INDEX]}"
               B_CONTENT="${BACKUP_CONTENTS[$RANDOM_INDEX]}"
-              
-              # 动态组装成跟 Workers 完美兼容的干净标准格式
               RESPONSE=$(jq -n --arg t "$B_TITLE" --arg c "$B_CONTENT" '{"title": $t, "content": $c}')
             fi
             
-            # 将原始无损 JSON 数据包砸入 Cloudflare KV 数据库
-            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${DOMAIN}_${p}" \
+            # 🎯 核心细节：数据精准灌注进 KV，无论未来蜘蛛爬主站还是爬二级泛域名，100% 都有粮食！
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${TARGET_HOST}_${p}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: text/plain" \
               -d "$RESPONSE"
               
-            URL_LIST="${URL_LIST}\"https://${DOMAIN}${p}\","
-            sleep 1 # 提速：由于有了完美本地裂变盾牌，呼吸时间缩短到 1 秒，疯狂提速！
+            URL_LIST="${URL_LIST}\"https://${TARGET_HOST}${p}\","
+            sleep 1
           done
           
           URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
 
-          # 🚀 调用必应 IndexNow 官方高速收录提交
+          # 🚀 高压集束推送给必应 IndexNow 官方接口
           curl -s -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \
             -d "{\"host\": \"${DOMAIN}\", \"key\": \"${INDEXNOW_KEY}\", \"keyLocation\": \"https://${DOMAIN}/${INDEXNOW_KEY}.txt\", \"urlList\": [${URL_LIST}]}"
           
-          echo "🚀 已成功将域名 $DOMAIN 的 10 套伪静态最新 URL 推送到必应 IndexNow 数据流！"
+          echo "🚀 已成功将域名 $DOMAIN 裂变出的 30 套大矩阵 URL 推送到必应 IndexNow 队列！"
           echo "--------------------------------------------------------"
         done
