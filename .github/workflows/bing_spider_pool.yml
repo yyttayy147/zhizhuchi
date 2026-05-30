@@ -1,18 +1,18 @@
-name: Gemini 2.5 Multi-Domain Spider Pool Cluster
+name: Gemini Content KV Sync
 
 on:
   schedule:
-    - cron: "0 14 * * *" # 精准对齐北京时间每天晚上 22:00 全自动触发
-  workflow_dispatch: # 支持管理员在 Actions 后台手动一键触发运行
+    - cron: "0 14 * * *" # 北京时间每天 22:00 触发
+  workflow_dispatch:
 
 jobs:
-  brain-sync:
+  content-sync:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Batch Inject AI Content & Call IndexNow
+    - name: Generate Content And Write KV
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -20,10 +20,23 @@ jobs:
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         DOMAINS: ${{ secrets.TARGET_DOMAINS }}
         INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
+        ENABLE_INDEXNOW: "true"
       run: |
-        read -r -a DOMAIN_ARRAY <<< "$DOMAINS"
-        
-        # 🎯【硬核升级】：从 10 套疯狂扩容至 30 套黄金垂直伪静态路径种子（全面网罗 2026 核心长尾流量）
+        set -u
+
+        if [ -z "${CF_ACCOUNT_ID:-}" ] || [ -z "${CF_KV_NAMESPACE_ID:-}" ] || [ -z "${CF_API_TOKEN:-}" ]; then
+          echo "Cloudflare secrets are missing. Please set CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, and CF_API_TOKEN."
+          exit 1
+        fi
+
+        if [ -z "${DOMAINS:-}" ]; then
+          echo "TARGET_DOMAINS is empty. Nothing to sync."
+          exit 0
+        fi
+
+        DOMAINS_NORMALIZED=$(echo "$DOMAINS" | tr ',\n' ' ')
+        read -r -a DOMAIN_ARRAY <<< "$DOMAINS_NORMALIZED"
+
         PATHS=(
           "/soft/kuailian-v2.8.5.html"
           "/soft/kuailian-v2.8.6.html"
@@ -57,10 +70,8 @@ jobs:
           "/app/kuailian-cross-platform-terminal.html"
         )
 
-        # 💡 用于在 Actions 推送时，全自动随机打散生成的 7 大高权重二级泛解析前缀
         PREFIXES=("v2ray" "ios" "android" "pc" "download" "client" "official")
 
-        # 工业级防线：4 套超长工业粮食库
         BACKUP_TITLES=(
           "快连VPN官方正版发布中心 - 极致连通性与端到端网络调优规范"
           "letsvpn 客户端安全接入与分布式边缘节点多环境部署技术白皮书"
@@ -75,11 +86,14 @@ jobs:
         )
 
         for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
-          echo "🌐 正在全力处理分布式大域核心节点: $DOMAIN"
-          URL_LIST=""
-          
+          if [ -z "$DOMAIN" ]; then
+            continue
+          fi
+
+          echo "Processing domain: $DOMAIN"
+          URL_LIST_JSON="[]"
+
           for p in "${PATHS[@]}"; do
-            # 🚀【超级裂变创新点】：每次推送时，1/3 的概率连带生成泛解析的二级域名路径一起推送！
             RAND_VAL=$((RANDOM % 3))
             if [ $RAND_VAL -eq 0 ]; then
               RAND_PREFIX=${PREFIXES[$((RANDOM % ${#PREFIXES[@]}))]}
@@ -88,42 +102,59 @@ jobs:
               TARGET_HOST="$DOMAIN"
             fi
 
-            echo "🤖 正在为宿主 [$TARGET_HOST] 召唤 Gemini 2.5 构筑伪静态语料: $p"
-            
-            # 使用 jq 封装标准 Prompt
+            echo "Generating content for https://${TARGET_HOST}${p}"
+
             DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$TARGET_HOST" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
-            
-            # 请求接口
-            RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "$DATA_BINARY")
-            
-            CHECK_VALID=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
-            
-            if [ -z "$CHECK_VALID" ] || [ "$CHECK_VALID" = "null" ]; then
+
+            CONTENT_JSON=""
+            if [ -n "${GEMINI_API_KEY:-}" ]; then
+              RESPONSE=$(curl -sS -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d "$DATA_BINARY" || true)
+
+              CONTENT_JSON=$(echo "$RESPONSE" \
+                | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null \
+                | sed -E 's/^```json[[:space:]]*//; s/^```[[:space:]]*//; s/[[:space:]]*```$//' \
+                | jq -c 'select(type == "object" and has("title") and has("content")) | {title: (.title | tostring), content: (.content | tostring)}' 2>/dev/null || true)
+            fi
+
+            if [ -z "$CONTENT_JSON" ]; then
               RANDOM_INDEX=$((${#p} % 4))
               B_TITLE="${BACKUP_TITLES[$RANDOM_INDEX]}"
               B_CONTENT="${BACKUP_CONTENTS[$RANDOM_INDEX]}"
-              RESPONSE=$(jq -n --arg t "$B_TITLE" --arg c "$B_CONTENT" '{"title": $t, "content": $c}')
+              CONTENT_JSON=$(jq -c -n --arg t "$B_TITLE" --arg c "$B_CONTENT" '{"title": $t, "content": $c}')
             fi
-            
-            # 🎯 核心细节：数据精准灌注进 KV，无论未来蜘蛛爬主站还是爬二级泛域名，100% 都有粮食！
-            curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/content_${TARGET_HOST}_${p}" \
+
+            KV_KEY="content_${TARGET_HOST}_${p}"
+            KV_KEY_ENCODED=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KV_KEY")
+
+            curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KV_KEY_ENCODED}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              -d "$RESPONSE"
-              
-            URL_LIST="${URL_LIST}\"https://${TARGET_HOST}${p}\","
+              -H "Content-Type: application/json; charset=utf-8" \
+              --data-binary "$CONTENT_JSON" \
+              | jq -e '.success == true' >/dev/null
+
+            URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" '. + [$url]')
             sleep 1
           done
-          
-          URL_LIST=$(echo "${URL_LIST}" | sed 's/,$//')
 
-          # 🚀 高压集束推送给必应 IndexNow 官方接口
-          curl -s -X POST "https://api.indexnow.org/IndexNow" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            -d "{\"host\": \"${DOMAIN}\", \"key\": \"${INDEXNOW_KEY}\", \"keyLocation\": \"https://${DOMAIN}/${INDEXNOW_KEY}.txt\", \"urlList\": [${URL_LIST}]}"
-          
-          echo "🚀 已成功将域名 $DOMAIN 裂变出的 30 套大矩阵 URL 推送到必应 IndexNow 队列！"
+          if [ "${ENABLE_INDEXNOW:-false}" = "true" ] && [ -n "${INDEXNOW_KEY:-}" ]; then
+            INDEXNOW_BODY=$(jq -n \
+              --arg host "$DOMAIN" \
+              --arg key "$INDEXNOW_KEY" \
+              --arg keyLocation "https://${DOMAIN}/${INDEXNOW_KEY}.txt" \
+              --argjson urlList "$URL_LIST_JSON" \
+              '{host: $host, key: $key, keyLocation: $keyLocation, urlList: $urlList}')
+
+            curl -sS -X POST "https://api.indexnow.org/IndexNow" \
+              -H "Content-Type: application/json; charset=utf-8" \
+              -d "$INDEXNOW_BODY"
+
+            echo "IndexNow submitted for $DOMAIN"
+          else
+            echo "IndexNow skipped for $DOMAIN. Set repository variable ENABLE_INDEXNOW=true to enable it."
+          fi
+
+          echo "Finished domain: $DOMAIN"
           echo "--------------------------------------------------------"
         done
