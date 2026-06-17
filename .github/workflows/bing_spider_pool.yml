@@ -21,6 +21,8 @@ jobs:
         DOMAINS: ${{ secrets.TARGET_DOMAINS }}
         INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
         ENABLE_INDEXNOW: "true"
+        KV_BATCH_SIZE: "10"
+        KV_MAX_WRITES: "900"
       run: |
         set -u
 
@@ -36,6 +38,8 @@ jobs:
 
         DOMAINS_NORMALIZED=$(echo "$DOMAINS" | tr ',\n' ' ')
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS_NORMALIZED"
+        WRITE_COUNT=0
+        KV_QUOTA_HIT=false
 
         PATHS=(
           "/soft/kuailian-v2.8.5.html"
@@ -70,7 +74,18 @@ jobs:
           "/app/kuailian-cross-platform-terminal.html"
         )
 
-        PREFIXES=("v2ray" "ios" "android" "pc" "download" "client" "official")
+        TOTAL_PATHS=${#PATHS[@]}
+        BATCH_SIZE=${KV_BATCH_SIZE:-10}
+        DAY_OF_YEAR=$((10#$(date -u +%j)))
+        BATCH_COUNT=$(( (TOTAL_PATHS + BATCH_SIZE - 1) / BATCH_SIZE ))
+        BATCH_INDEX=$(( (DAY_OF_YEAR - 1) % BATCH_COUNT ))
+        START_IDX=$(( BATCH_INDEX * BATCH_SIZE ))
+        END_IDX=$(( START_IDX + BATCH_SIZE ))
+        if [ "$END_IDX" -gt "$TOTAL_PATHS" ]; then
+          END_IDX=$TOTAL_PATHS
+        fi
+
+        echo "KV batch mode: paths ${START_IDX}-$((END_IDX - 1)) of ${TOTAL_PATHS} (batch $((BATCH_INDEX + 1))/${BATCH_COUNT}, free tier ~1000 writes/day)"
 
         BACKUP_TITLES=(
           "快连VPN官方正版发布中心 - 极致连通性与端到端网络调优规范"
@@ -90,16 +105,22 @@ jobs:
             continue
           fi
 
+          if [ "$KV_QUOTA_HIT" = true ]; then
+            echo "Skipping domain $DOMAIN — KV daily quota already reached."
+            continue
+          fi
+
           echo "Processing domain: $DOMAIN"
           URL_LIST_JSON="[]"
 
-          for p in "${PATHS[@]}"; do
-            RAND_VAL=$((RANDOM % 3))
-            if [ $RAND_VAL -eq 0 ]; then
-              RAND_PREFIX=${PREFIXES[$((RANDOM % ${#PREFIXES[@]}))]}
-              TARGET_HOST="${RAND_PREFIX}.${DOMAIN}"
-            else
-              TARGET_HOST="$DOMAIN"
+          for (( i=START_IDX; i<END_IDX; i++ )); do
+            p="${PATHS[$i]}"
+            TARGET_HOST="$DOMAIN"
+
+            if [ "$WRITE_COUNT" -ge "${KV_MAX_WRITES:-900}" ]; then
+              echo "Reached run write limit (${KV_MAX_WRITES:-900}). Stopping to protect free tier quota."
+              KV_QUOTA_HIT=true
+              break
             fi
 
             echo "Generating content for https://${TARGET_HOST}${p}"
@@ -134,14 +155,28 @@ jobs:
               --data-binary "$CONTENT_JSON")
 
             if ! echo "$CF_RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
+              CF_ERROR_CODE=$(echo "$CF_RESPONSE" | jq -r '.errors[0].code // empty' 2>/dev/null || true)
+              CF_ERROR_MSG=$(echo "$CF_RESPONSE" | jq -r '.errors[0].message // empty' 2>/dev/null || true)
               echo "Cloudflare KV write failed for key: ${KV_KEY}"
               echo "$CF_RESPONSE" | jq '.' 2>/dev/null || echo "$CF_RESPONSE"
+
+              if [ "$CF_ERROR_CODE" = "10048" ]; then
+                echo "⚠️ Cloudflare KV 免费版今日写入额度已用完（1000次/天），UTC 零点重置后再运行。"
+                KV_QUOTA_HIT=true
+                break
+              fi
+
               exit 1
             fi
 
+            WRITE_COUNT=$((WRITE_COUNT + 1))
             URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" '. + [$url]')
             sleep 1
           done
+
+          if [ "$KV_QUOTA_HIT" = true ]; then
+            break
+          fi
 
           if [ "${ENABLE_INDEXNOW:-false}" = "true" ] && [ -n "${INDEXNOW_KEY:-}" ]; then
             INDEXNOW_BODY=$(jq -n \
@@ -163,3 +198,9 @@ jobs:
           echo "Finished domain: $DOMAIN"
           echo "--------------------------------------------------------"
         done
+
+        echo "Total KV writes this run: ${WRITE_COUNT}"
+        if [ "$KV_QUOTA_HIT" = true ]; then
+          echo "Run stopped early due to KV quota limit. Remaining paths will sync on the next scheduled run."
+          exit 0
+        fi
