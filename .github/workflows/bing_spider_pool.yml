@@ -128,11 +128,16 @@ jobs:
             KV_KEY="content_${TARGET_HOST}_${p}"
             KV_KEY_ENCODED=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KV_KEY")
 
-            curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KV_KEY_ENCODED}" \
+            CF_RESPONSE=$(curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KV_KEY_ENCODED}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: application/json; charset=utf-8" \
-              --data-binary "$CONTENT_JSON" \
-              | jq -e '.success == true' >/dev/null
+              --data-binary "$CONTENT_JSON")
+
+            if ! echo "$CF_RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
+              echo "Cloudflare KV write failed for key: ${KV_KEY}"
+              echo "$CF_RESPONSE" | jq '.' 2>/dev/null || echo "$CF_RESPONSE"
+              exit 1
+            fi
 
             URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" '. + [$url]')
             sleep 1

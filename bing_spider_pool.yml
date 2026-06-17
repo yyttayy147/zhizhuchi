@@ -69,7 +69,7 @@ export default {
         try {
           // 💡 核心对齐：精准补齐斜杠前缀，完美匹配 GitHub 塞进来的 Key 格式
           const cleanPath = url.pathname.startsWith('/') ? url.pathname : '/' + url.pathname;
-          const targetKey = `content_${url.hostname}${cleanPath}`;
+          const targetKey = `content_${url.hostname}_${cleanPath}`;
           
           const rawKvData = await env.SPIDER_STATS_KV.get(targetKey);
           if (rawKvData && rawKvData !== "null") {
