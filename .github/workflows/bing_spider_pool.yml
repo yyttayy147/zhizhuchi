@@ -3,10 +3,7 @@ name: Gemini Content KV Sync
 on:
   schedule:
     - cron: "0 0 * * *"   # 北京时间 08:00
-    - cron: "0 4 * * *"   # 北京时间 12:00
-    - cron: "0 8 * * *"   # 北京时间 16:00
     - cron: "0 12 * * *"  # 北京时间 20:00
-    - cron: "0 16 * * *"  # 北京时间 00:00
   workflow_dispatch:
 
 jobs:
@@ -25,7 +22,7 @@ jobs:
         DOMAINS: ${{ secrets.TARGET_DOMAINS }}
         INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
         ENABLE_INDEXNOW: "true"
-        ARTICLES_PER_RUN: "3"
+        ARTICLES_PER_RUN: "2"
       run: |
         set -u
 
@@ -112,14 +109,11 @@ jobs:
         DAY_INDEX=$(date -u +%j)
         case "$UTC_HOUR" in
           00) SLOT=0 ;;
-          04) SLOT=1 ;;
-          08) SLOT=2 ;;
-          12) SLOT=3 ;;
-          16) SLOT=4 ;;
-          *) SLOT=$((10#$DAY_INDEX % 5)) ;;
+          12) SLOT=1 ;;
+          *) SLOT=$((10#$DAY_INDEX % 2)) ;;
         esac
 
-        echo "Daily slot: $SLOT / 5 | articles per domain per run: ${ARTICLES_PER_RUN}"
+        echo "Daily slot: $SLOT / 2 | articles per domain per run: ${ARTICLES_PER_RUN}"
         echo "Total paths in pool: ${#PATHS[@]}"
 
         for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
@@ -162,6 +156,8 @@ jobs:
             if [ -z "$CONTENT_JSON" ]; then
               CONTENT_JSON=$(node scripts/pick-backup-article.js "$p" "$TARGET_HOST" "$SLOT")
             fi
+
+            CONTENT_JSON=$(echo "$CONTENT_JSON" | node scripts/enrich-article-meta.js "$p" "$TARGET_HOST" "$SLOT")
 
             KV_KEY="content_${TARGET_HOST}_${p}"
             KV_KEY_ENCODED=$(kv_key_encode "$KV_KEY")

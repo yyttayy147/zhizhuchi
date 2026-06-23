@@ -100,7 +100,6 @@ export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
-      const currentPath = normalizePath(url.pathname);
       const botType = detectBotType(request.headers.get("user-agent") || "");
       const INDEXNOW_KEY = env?.BING_INDEXNOW_KEY || CONFIG.defaultIndexNowKey;
 
@@ -111,7 +110,7 @@ export default {
       }
 
       if (url.pathname === "/sitemap.xml") {
-        return renderDynamicSitemap(url.hostname);
+        return await renderDynamicSitemap(url.hostname, env?.SPIDER_STATS_KV);
       }
 
       if (url.pathname === "/robots.txt") {
@@ -119,7 +118,15 @@ export default {
       }
 
       if (url.pathname === "/rss.xml" || url.pathname === "/feed.xml") {
-        return renderRssFeed(url.hostname);
+        return await renderRssFeed(url.hostname, env?.SPIDER_STATS_KV);
+      }
+
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        const homeHash = Math.abs(hashCode(url.hostname));
+        if (botType && env?.SPIDER_STATS_KV) {
+          ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, "/", botType));
+        }
+        return await renderHomePage(url.hostname, env?.SPIDER_STATS_KV, homeHash);
       }
 
       if (url.pathname === "/spider-dashboard-api") {
@@ -149,12 +156,13 @@ export default {
         return await renderMultiBotDashboard(env?.SPIDER_STATS_KV, url.hostname);
       }
 
+      const currentPath = normalizePath(url.pathname);
+      const pathHash = Math.abs(hashCode(currentPath + url.hostname));
+
       if (botType && env?.SPIDER_STATS_KV) {
         ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, currentPath, botType));
       }
 
-      const todayStr = new Date().toISOString().split("T")[0];
-      const pathHash = Math.abs(hashCode(currentPath + url.hostname + todayStr));
       const targetLink = await loadTargetLink(env?.SPIDER_STATS_KV);
       const rawTopic = await loadTopic(env?.SPIDER_STATS_KV, url.hostname, currentPath, pathHash);
       const contentData = buildContentData(rawTopic, targetLink, pathHash, url.hostname);
@@ -175,7 +183,7 @@ export default {
 };
 
 function normalizePath(pathname) {
-  if (!pathname || pathname === "/") return "/soft/kuailian-v2.8.5.html";
+  if (!pathname) return "/soft/kuailian-v2.8.5.html";
   return pathname;
 }
 
@@ -252,12 +260,16 @@ async function loadTopic(kv, hostname, currentPath, pathHash) {
       return {
         title: parsedTopic.title,
         content: parsedTopic.content,
-        fromKv: true
+        fromKv: true,
+        author: parsedTopic.author,
+        publishedAt: parsedTopic.publishedAt,
+        updatedAt: parsedTopic.updatedAt,
+        articleType: parsedTopic.articleType
       };
     }
   } catch (e) {}
 
-  return fallbackTopic;
+  return { ...fallbackTopic, fromKv: false };
 }
 
 function parseKvContentPayload(raw) {
@@ -272,7 +284,16 @@ function parseKvContentPayload(raw) {
       parsed = JSON.parse(text);
     }
 
-    if (parsed?.title && parsed?.content) return parsed;
+    if (parsed?.title && parsed?.content) {
+      return {
+        title: parsed.title,
+        content: parsed.content,
+        author: parsed.author,
+        publishedAt: parsed.publishedAt,
+        updatedAt: parsed.updatedAt,
+        articleType: parsed.articleType
+      };
+    }
   } catch (e) {}
 
   return null;
@@ -306,19 +327,26 @@ function pickKeywordProfile(hostname, seed) {
 
 function buildContentData(rawTopic, targetLink, pathHash, hostname) {
   const profile = pickKeywordProfile(hostname, pathHash);
+  const base = {
+    keywordProfile: profile,
+    author: rawTopic.author || "编辑部",
+    publishedAt: rawTopic.publishedAt,
+    updatedAt: rawTopic.updatedAt,
+    articleType: rawTopic.articleType
+  };
 
   if (rawTopic.fromKv) {
     return {
+      ...base,
       title: rawTopic.title,
-      content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile),
-      keywordProfile: profile
+      content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile)
     };
   }
 
   return {
+    ...base,
     title: `${profile.primary}${profile.tail} - ${rawTopic.title}`,
-    content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile),
-    keywordProfile: profile
+    content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile)
   };
 }
 
@@ -327,11 +355,10 @@ function buildInnerLinks(hostname, pathHash) {
 
   for (let i = 0; i < 5; i++) {
     const pIndex = (pathHash + i) % SEED_PATHS.length;
-    const profile = pickKeywordProfile(hostname, pathHash + i * 17);
-
+    const path = SEED_PATHS[pIndex];
     totalInnerLinks.push({
-      name: `${profile.primary}${profile.tail}`,
-      url: `https://${hostname}${SEED_PATHS[pIndex]}`
+      name: pathToLinkLabel(path),
+      url: `https://${hostname}${path}`
     });
   }
 
@@ -339,14 +366,14 @@ function buildInnerLinks(hostname, pathHash) {
   for (let i = 0; i < 5; i++) {
     const targetDomain = alternativeDomains[i % alternativeDomains.length] || "mixdvr.com";
     const pIndex = (pathHash + i + 3) % SEED_PATHS.length;
-    const profile = pickKeywordProfile(targetDomain, pathHash + i * 23);
+    const path = SEED_PATHS[pIndex];
 
     const targetUrl = (pathHash + i) % 3 === 0
       ? `https://${targetDomain}/`
-      : `https://${targetDomain}${SEED_PATHS[pIndex]}`;
+      : `https://${targetDomain}${path}`;
 
     totalInnerLinks.push({
-      name: `${profile.primary}${profile.tail}`,
+      name: pathToLinkLabel(path),
       url: targetUrl
     });
   }
@@ -425,35 +452,96 @@ function buildFaviconDataUri(logoText, color) {
 
 
 function injectTargetKeywords(text, targetLink, seed, profile) {
-  const paragraphs = String(text || "").split("\n\n");
+  const paragraphs = String(text || "").split("\n\n").map(p => escapeHtml(p.trim())).filter(Boolean);
   const safeTargetLink = escapeHtml(targetLink);
-  const pool = keywordConfig.pools[profile.poolKey];
-
-  for (let i = 0; i < paragraphs.length; i++) {
-    if (paragraphs[i].trim().length > 30) {
-      const coreWord = [profile.primary, profile.secondary, profile.tertiary][i % 3];
-      const tailAttr = pool.tails[(seed + i + 1) % pool.tails.length];
-      const fullKw = `${coreWord}${tailAttr}`;
-      const midPoint = Math.floor(paragraphs[i].length / 2);
-      const anchorHtml = ` <a href="${safeTargetLink}" style="color:inherit; font-weight:700; text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(fullKw)}</a> `;
-
-      paragraphs[i] = escapeHtml(paragraphs[i].substring(0, midPoint)) + anchorHtml + escapeHtml(paragraphs[i].substring(midPoint));
-    } else {
-      paragraphs[i] = escapeHtml(paragraphs[i]);
-    }
-  }
-
-  return paragraphs.join("<br><br>");
+  const phrases = [
+    `查看${profile.primary}相关说明`,
+    `了解更多${profile.secondary}信息`,
+    `${profile.tertiary}官方参考页面`
+  ];
+  const phrase = phrases[Math.abs(seed) % phrases.length];
+  const refBlock = `<p class="ref-link"><strong>延伸阅读：</strong><a href="${safeTargetLink}" target="_blank" rel="noopener noreferrer">${escapeHtml(phrase)}</a></p>`;
+  return `${paragraphs.join("<br><br>")}${refBlock}`;
 }
 
-function renderDynamicSitemap(domain) {
-  const todayStr = new Date().toISOString().split("T")[0];
+const CATEGORY_LABELS = {
+  soft: "软件下载",
+  download: "客户端下载",
+  ai: "人工智能",
+  review: "评测报告",
+  setup: "安装教程",
+  news: "更新资讯",
+  app: "应用工具",
+  guide: "使用指南",
+  travel: "旅行出行",
+  media: "影音媒体"
+};
+
+async function batchKvGetValues(kv, keys, batchSize = 25) {
+  const results = [];
+  for (let i = 0; i < keys.length; i += batchSize) {
+    const chunk = keys.slice(i, i + batchSize);
+    const chunkVals = await Promise.all(chunk.map(name => kv.get(name)));
+    results.push(...chunkVals);
+  }
+  return results;
+}
+
+async function loadDomainArticles(kv, hostname, paths) {
+  if (!kv) return new Map();
+  const keys = paths.map(p => `content_${hostname}_${p}`);
+  const vals = await batchKvGetValues(kv, keys);
+  const map = new Map();
+  for (let i = 0; i < paths.length; i++) {
+    const parsed = parseKvContentPayload(vals[i]);
+    if (parsed?.title) map.set(paths[i], parsed);
+  }
+  return map;
+}
+
+function defaultLastmodForPath(path) {
+  const seed = Math.abs(hashCode(path));
+  const month = (seed % 12) + 1;
+  const day = (seed % 27) + 1;
+  return `2026-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function pathToLinkLabel(path) {
+  const slug = path.replace(/\.html$/i, "").split("/").pop() || "article";
+  return slug.replace(/-/g, " ").replace(/kuailian/gi, "快连").slice(0, 40);
+}
+
+function getCategoryGroups() {
+  const groups = {};
+  for (const p of SEED_PATHS) {
+    const seg = p.split("/").filter(Boolean)[0] || "other";
+    if (!groups[seg]) {
+      groups[seg] = { label: CATEGORY_LABELS[seg] || seg, paths: [] };
+    }
+    groups[seg].paths.push(p);
+  }
+  return groups;
+}
+
+function formatRfc822(dateStr) {
+  if (!dateStr) return new Date().toUTCString();
+  const d = new Date(`${dateStr}T08:00:00Z`);
+  return Number.isNaN(d.getTime()) ? new Date().toUTCString() : d.toUTCString();
+}
+
+async function renderDynamicSitemap(domain, kv) {
+  const articles = await loadDomainArticles(kv, domain, SEED_PATHS);
   let xmlUrls = "";
 
   SEED_PATHS.forEach((path, index) => {
+    const article = articles.get(path);
+    const lastmod = article?.updatedAt || article?.publishedAt || defaultLastmodForPath(path);
     const priority = index < 5 ? "1.0" : index < 15 ? "0.9" : "0.8";
-    xmlUrls += `  <url>\n    <loc>https://${escapeHtml(domain)}${escapeHtml(path)}</loc>\n    <lastmod>${todayStr}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>${priority}</priority>\n  </url>\n`;
+    const changefreq = article?.updatedAt ? "weekly" : "monthly";
+    xmlUrls += `  <url>\n    <loc>https://${escapeHtml(domain)}${escapeHtml(path)}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${changefreq}</changefreq>\n    <priority>${priority}</priority>\n  </url>\n`;
   });
+
+  xmlUrls = `  <url>\n    <loc>https://${escapeHtml(domain)}/</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n${xmlUrls}`;
 
   return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${xmlUrls}</urlset>`, {
     headers: { "content-type": "application/xml;charset=UTF-8", "cache-control": "public, max-age=3600" }
@@ -467,20 +555,122 @@ function renderRobotsTxt(domain) {
   });
 }
 
-function renderRssFeed(domain) {
-  const todayStr = new Date().toISOString();
-  const items = SEED_PATHS.slice(0, 20).map((path, index) => {
-    const profile = pickKeywordProfile(domain, index + 5);
-    const topic = CONFIG.topics[index % CONFIG.topics.length];
-    const title = `${profile.primary}${profile.tail} - ${topic.title}`;
-    return `    <item>\n      <title>${escapeHtml(title)}</title>\n      <link>https://${escapeHtml(domain)}${escapeHtml(path)}</link>\n      <guid>https://${escapeHtml(domain)}${escapeHtml(path)}</guid>\n      <pubDate>${todayStr}</pubDate>\n      <description>${escapeHtml(topic.content.substring(0, 180))}...</description>\n    </item>`;
+async function renderRssFeed(domain, kv) {
+  const scanPaths = SEED_PATHS.slice(0, 40);
+  const articles = await loadDomainArticles(kv, domain, scanPaths);
+  const brand = getSiteBrand(domain);
+
+  const ranked = scanPaths
+    .map(path => ({ path, article: articles.get(path) }))
+    .filter(row => row.article)
+    .sort((a, b) => String(b.article.updatedAt || b.article.publishedAt || "").localeCompare(String(a.article.updatedAt || a.article.publishedAt || "")))
+    .slice(0, 20);
+
+  const fallback = ranked.length ? ranked : scanPaths.slice(0, 10).map(path => {
+    const profile = pickKeywordProfile(domain, Math.abs(hashCode(path)));
+    const topic = CONFIG.topics[Math.abs(hashCode(path)) % CONFIG.topics.length];
+    return {
+      path,
+      article: {
+        title: `${profile.primary} - ${topic.title}`,
+        content: topic.content,
+        updatedAt: defaultLastmodForPath(path)
+      }
+    };
+  });
+
+  const items = fallback.map(({ path, article }) => {
+    const pubDate = formatRfc822(article.updatedAt || article.publishedAt);
+    const desc = escapeHtml(String(article.content || "").replace(/\s+/g, " ").slice(0, 180));
+    return `    <item>\n      <title>${escapeHtml(article.title)}</title>\n      <link>https://${escapeHtml(domain)}${escapeHtml(path)}</link>\n      <guid>https://${escapeHtml(domain)}${escapeHtml(path)}</guid>\n      <pubDate>${pubDate}</pubDate>\n      <description>${desc}...</description>\n    </item>`;
   }).join("\n");
 
-  const brand = getSiteBrand(domain);
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(brand.name)}</title>\n    <link>https://${escapeHtml(domain)}/</link>\n    <description>${escapeHtml(brand.tagline)}</description>\n    <lastBuildDate>${todayStr}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
+  const lastBuild = formatRfc822(fallback[0]?.article?.updatedAt);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(brand.name)}</title>\n    <link>https://${escapeHtml(domain)}/</link>\n    <description>${escapeHtml(brand.tagline)}</description>\n    <lastBuildDate>${lastBuild}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
 
   return new Response(xml, {
     headers: { "content-type": "application/rss+xml;charset=UTF-8", "cache-control": "public, max-age=1800" }
+  });
+}
+
+async function renderHomePage(hostname, kv, pathHash) {
+  const brand = getSiteBrand(hostname);
+  const theme = {
+    bg: "#f4f6f9",
+    primary: "#007bff",
+    accent: "#e6f0fa",
+    radius: "8px",
+    text: "#333333"
+  };
+  const scanPaths = SEED_PATHS.slice(0, 50);
+  const articles = await loadDomainArticles(kv, hostname, SEED_PATHS);
+  const groups = getCategoryGroups();
+
+  const latest = [...articles.entries()]
+    .sort((a, b) => String(b[1].updatedAt || b[1].publishedAt || "").localeCompare(String(a[1].updatedAt || a[1].publishedAt || "")))
+    .slice(0, 12);
+
+  if (latest.length < 8) {
+    for (const p of scanPaths) {
+      if (latest.length >= 12) break;
+      if (articles.has(p)) continue;
+      const profile = pickKeywordProfile(hostname, Math.abs(hashCode(p)));
+      latest.push([p, {
+        title: `${profile.primary} - ${pathToLinkLabel(p)}`,
+        updatedAt: defaultLastmodForPath(p)
+      }]);
+    }
+  }
+
+  const categoryHtml = Object.entries(groups).map(([seg, group]) => {
+    const links = group.paths.slice(0, 6).map(p => `<li><a href="${escapeHtml(p)}">${escapeHtml(pathToLinkLabel(p))}</a></li>`).join("");
+    return `<section class="cat-box"><h2>${escapeHtml(group.label)}</h2><ul>${links}</ul><a class="more" href="${escapeHtml(group.paths[0])}">查看更多 &rarr;</a></section>`;
+  }).join("");
+
+  const latestHtml = latest.map(([p, article]) => {
+    const date = article.updatedAt || article.publishedAt || "";
+    return `<li><a href="${escapeHtml(p)}">${escapeHtml(article.title)}</a>${date ? `<time>${escapeHtml(date)}</time>` : ""}</li>`;
+  }).join("");
+
+  const siteName = escapeHtml(brand.name);
+  const siteTagline = escapeHtml(brand.tagline);
+  const logoText = escapeHtml(brand.logo);
+  const faviconUri = buildFaviconDataUri(brand.logo, theme.primary);
+
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${siteName} - 首页</title><meta name="description" content="${siteName} - ${siteTagline}"><link rel="canonical" href="https://${escapeHtml(brand.domain)}/"><link rel="icon" href="${faviconUri}" type="image/svg+xml"><link rel="alternate" type="application/rss+xml" title="${siteName}" href="/rss.xml"><style>
+    *{box-sizing:border-box;margin:0;padding:0}body{background:${theme.bg};color:${theme.text};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7;padding:20px}
+    .wrap{max-width:1100px;margin:0 auto;background:#fff;border-radius:${theme.radius};box-shadow:0 10px 30px rgba(0,0,0,.04);overflow:hidden}
+    .head{padding:22px 30px;border-bottom:1px solid ${theme.accent};display:flex;align-items:center;gap:14px}
+    .logo{width:48px;height:48px;border-radius:12px;background:${theme.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+    .hero{padding:28px 30px;background:${theme.accent}}
+    .hero h1{font-size:24px;color:${theme.primary};margin-bottom:8px}
+    .hero p{color:#6b7280;font-size:14px}
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:24px;padding:30px}
+    .cats{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .cat-box{background:${theme.accent};border-radius:8px;padding:16px}
+    .cat-box h2{font-size:15px;color:${theme.primary};margin-bottom:10px}
+    .cat-box ul{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+    .cat-box a{color:#374151;text-decoration:none;font-size:14px}
+    .more{font-size:13px;color:${theme.primary};text-decoration:none}
+    .latest h2{font-size:16px;color:${theme.primary};margin-bottom:12px}
+    .latest ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+    .latest li{display:flex;flex-direction:column;gap:2px;padding-bottom:10px;border-bottom:1px solid ${theme.accent}}
+    .latest a{color:#111827;text-decoration:none;font-size:14px;font-weight:500}
+    .latest time{font-size:12px;color:#9ca3af}
+    .feeds{padding:0 30px 20px;font-size:13px;color:#6b7280}
+    .feeds a{color:${theme.primary};margin-right:14px}
+    .foot{text-align:center;padding:18px;color:#9ca3af;font-size:13px;border-top:1px solid ${theme.accent}}
+    @media(max-width:800px){.grid,.cats{grid-template-columns:1fr}}
+  </style></head><body><div class="wrap">
+    <header class="head"><div class="logo">${logoText}</div><div><strong style="color:${theme.primary}">${siteName}</strong><div style="font-size:12px;color:#6b7280">${siteTagline}</div></div></header>
+    <section class="hero"><h1>${siteName}</h1><p>${siteTagline}。汇集软件下载、AI 工具、评测教程与实用指南。</p></section>
+    <div class="feeds"><a href="/sitemap.xml">网站地图</a><a href="/rss.xml">RSS 订阅</a></div>
+    <div class="grid"><div class="cats">${categoryHtml}</div><aside class="latest"><h2>最近更新</h2><ul>${latestHtml}</ul></aside></div>
+    <footer class="foot">&copy; 2026 ${siteName}</footer>
+  </div></body></html>`;
+
+  return new Response(html, {
+    headers: { "content-type": "text/html;charset=UTF-8", "cache-control": "public, max-age=600" }
   });
 }
 
@@ -551,6 +741,14 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
   const metaKeywords = escapeHtml(profile.metaKeywords.join(", "));
   const bingImgSrc = `https://tse-mm.bing.com/th?q=${encodeURIComponent(profile.imageQuery)}`;
   const bingImgSrc2 = `https://tse-mm.bing.com/th?q=${encodeURIComponent(profile.imageQuery2)}`;
+  const authorName = escapeHtml(data.author || "编辑部");
+  const publishedAt = data.publishedAt || "";
+  const updatedAt = data.updatedAt || publishedAt;
+  const dateLine = publishedAt
+    ? `<p class="article-meta"><span>${authorName}</span> · <time datetime="${escapeHtml(publishedAt)}">发布于 ${escapeHtml(publishedAt)}</time>${updatedAt && updatedAt !== publishedAt ? ` · <time datetime="${escapeHtml(updatedAt)}">更新于 ${escapeHtml(updatedAt)}</time>` : ""}</p>`
+    : `<p class="article-meta"><span>${authorName}</span></p>`;
+  const isoPublished = publishedAt ? `${publishedAt}T08:00:00+08:00` : "";
+  const isoModified = updatedAt ? `${updatedAt}T08:00:00+08:00` : isoPublished;
 
   const linkListHtml = totalInnerLinks
     .map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`)
@@ -574,7 +772,7 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
         : `<header class="hero-top"><h1>${pageTitle}</h1></header>`;
 
   const imgHtml = `<div class="img-row"><div class="img-box"><img src="${bingImgSrc}" alt="${escapeHtml(profile.primary)}" loading="lazy"></div><div class="img-box"><img src="${bingImgSrc2}" alt="${escapeHtml(profile.secondary)}" loading="lazy"></div></div>`;
-  const articleHtml = `<h2 class="section-title">${escapeHtml(heading)}</h2><article class="content-text">${content}</article>${imgHtml}`;
+  const articleHtml = `${dateLine}<h2 class="section-title">${escapeHtml(heading)}</h2><article class="content-text">${content}</article>${imgHtml}`;
 
   let linksPanelHtml = "";
   if (variant.links === "grid") {
@@ -611,10 +809,18 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
 
   const schemaJson = JSON.stringify({
     "@context": "https://schema.org",
-    "@type": "WebPage",
-    name: data.title,
+    "@type": "Article",
+    headline: data.title,
+    author: { "@type": "Person", name: data.author || "编辑部" },
+    datePublished: isoPublished || undefined,
+    dateModified: isoModified || undefined,
     description: `${brand.tagline} - ${data.title}`,
     url: `https://${brand.domain}${currentPath}`,
+    image: bingImgSrc,
+    publisher: {
+      "@type": "Organization",
+      name: brand.name
+    },
     isPartOf: {
       "@type": "WebSite",
       name: brand.name,
@@ -634,6 +840,9 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
     .site-tagline { font-size: 12px; color: #6b7280; line-height: 1.4; }
     h1 { color: ${theme.primary}; font-size: 24px; line-height: 1.4; }
     .section-title { font-size: 18px; color: ${theme.primary}; margin: 0 0 15px; }
+    .article-meta { font-size: 13px; color: #6b7280; margin-bottom: 18px; }
+    .ref-link { margin-top: 20px; padding-top: 16px; border-top: 1px dashed ${theme.accent}; font-size: 14px; }
+    .ref-link a { color: ${theme.primary}; }
     .content-text { font-size: 15px; color: #374151; text-align: justify; }
     .img-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 25px 0; }
     .img-box { width: 100%; border-radius: 8px; overflow: hidden; background: #f3f4f6; border: 1px solid ${theme.accent}; }
@@ -659,7 +868,7 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
     .site-footer { text-align: center; padding: 20px; color: #9ca3af; font-size: 13px; }
   `;
 
-  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fullTitle}</title><meta name="keywords" content="${pageTitle}, ${siteName}, ${metaKeywords}"><meta name="description" content="${siteName} - ${siteTagline}。${pageTitle}"><link rel="canonical" href="${canonicalUrl}"><link rel="icon" href="${faviconUri}" type="image/svg+xml"><meta property="og:site_name" content="${siteName}"><meta property="og:title" content="${pageTitle}"><meta property="og:description" content="${siteTagline}"><meta property="og:url" content="${canonicalUrl}"><meta property="og:type" content="article"><meta property="og:image" content="${bingImgSrc}"><link rel="alternate" type="application/rss+xml" title="${siteName}" href="/rss.xml"><script type="application/ld+json">${schemaJson}</script><style>${baseCss}@media(max-width:800px){.layout-two-col,.layout-two-col.reverse,.link-columns,.link-grid,.img-row{grid-template-columns:1fr}.site-brand{align-items:flex-start}}</style></head><body>${bodyLayout}<footer class="site-footer">&copy; 2026 ${siteName} &middot; ${siteDomain}</footer></body></html>`;
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fullTitle}</title><meta name="keywords" content="${pageTitle}, ${siteName}, ${metaKeywords}"><meta name="description" content="${siteName} - ${siteTagline}。${pageTitle}"><meta name="author" content="${authorName}">${publishedAt ? `<meta property="article:published_time" content="${escapeHtml(isoPublished)}">` : ""}${updatedAt ? `<meta property="article:modified_time" content="${escapeHtml(isoModified)}">` : ""}<link rel="canonical" href="${canonicalUrl}"><link rel="icon" href="${faviconUri}" type="image/svg+xml"><meta property="og:site_name" content="${siteName}"><meta property="og:title" content="${pageTitle}"><meta property="og:description" content="${siteTagline}"><meta property="og:url" content="${canonicalUrl}"><meta property="og:type" content="article"><meta property="og:image" content="${bingImgSrc}"><link rel="alternate" type="application/rss+xml" title="${siteName}" href="/rss.xml"><script type="application/ld+json">${schemaJson}</script><style>${baseCss}@media(max-width:800px){.layout-two-col,.layout-two-col.reverse,.link-columns,.link-grid,.img-row{grid-template-columns:1fr}.site-brand{align-items:flex-start}}</style></head><body>${bodyLayout}<footer class="site-footer">&copy; 2026 ${siteName} &middot; ${siteDomain}</footer></body></html>`;
 
   return new Response(html, {
     headers: { "content-type": "text/html;charset=UTF-8", "cache-control": "public, max-age=600" }

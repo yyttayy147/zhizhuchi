@@ -1,11 +1,11 @@
 const fs = require("fs");
 const path = require("path");
-const { buildGeminiPrompt, pickBackupArticle, getAllPaths } = require("./keyword-utils");
+const { buildGeminiPrompt, pickBackupArticle, getAllPaths, humanizeContent } = require("./keyword-utils");
 
 const CF_ACCOUNT_ID = "6b7c6e17c84b141e12bb8cae44579ca3";
 const CF_KV_NAMESPACE_ID = "535c3b6d9bab4acfa5445e9ad854aec4";
 const INDEXNOW_KEY = "1123858585";
-const ARTICLES_PER_RUN = Number(process.env.ARTICLES_PER_RUN || 3);
+const ARTICLES_PER_RUN = Number(process.env.ARTICLES_PER_RUN || 2);
 
 const DOMAINS = (process.env.DOMAINS || `mixdvr.com kuailian--1.com kuailian-app.cc kuailian-pc.vip kuailian-cn.vip kuai-lian.xyz ardlervillagetrust.org todayscatholicpueblo.org reviewbooking.com perfectxml.com booking365.net njreporter.org test-deepseek.com forum-deepseek.com aideep-seek.icu deepseek-cn.vip deepseek-v4.it.com`).split(/\s+/).filter(Boolean);
 
@@ -51,6 +51,21 @@ function readCfToken() {
 
 const GEMINI_API_KEY = readGeminiKey();
 const CF_TOKEN = readCfToken();
+
+function enrichArticle(article, p, domain, slot) {
+  const today = new Date().toISOString().split("T")[0];
+  const types = ["tutorial", "review", "faq", "news"];
+  const authors = ["编辑部", "技术组", "小李", "评测君", "运维笔记"];
+  const seed = Math.abs(require("./keyword-utils").hashCode(`${p}|${domain}|meta|${slot}`));
+  return {
+    title: String(article.title || "").trim(),
+    content: humanizeContent(String(article.content || "").trim()),
+    author: article.author || authors[seed % authors.length],
+    articleType: article.articleType || types[seed % types.length],
+    publishedAt: article.publishedAt || today,
+    updatedAt: today
+  };
+}
 
 function encodeKey(key) {
   return encodeURIComponent(key);
@@ -133,8 +148,8 @@ async function indexNow(domain, urls) {
 
 async function main() {
   const utcHour = new Date().getUTCHours();
-  const slotMap = { 0: 0, 4: 1, 8: 2, 12: 3, 16: 4 };
-  const slot = slotMap[utcHour] ?? (new Date().getUTCDate() % 5);
+  const slotMap = { 0: 0, 12: 1 };
+  const slot = slotMap[utcHour] ?? (new Date().getUTCDate() % 2);
 
   console.log(`=== Content Sync Start | domains=${DOMAINS.length} | per domain=${ARTICLES_PER_RUN} | slot=${slot} | paths=${PATHS.length} ===`);
 
@@ -145,7 +160,8 @@ async function main() {
 
     for (const p of paths) {
       console.log(`Generating https://${domain}${p}`);
-      const content = await geminiContent(p, domain, slot);
+      const raw = await geminiContent(p, domain, slot);
+      const content = enrichArticle(raw, p, domain, slot);
       const kvKey = `content_${domain}_${p}`;
       await kvPut(kvKey, content);
       urls.push(`https://${domain}${p}`);
