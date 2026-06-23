@@ -98,10 +98,25 @@ const SEED_PATHS = [
 const SEED_PATH_SET = new Set(SEED_PATHS);
 
 // ==================== 2. 主程序核心逻辑 ====================
+function maybeCanonicalRedirect(request) {
+  const url = new URL(request.url);
+  const rootDomain = getRootDomain(url.hostname);
+  if (url.hostname.toLowerCase() !== rootDomain) {
+    const target = new URL(url);
+    target.hostname = rootDomain;
+    return Response.redirect(target.toString(), 301);
+  }
+  return null;
+}
+
 export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
+      const canonicalRedirect = maybeCanonicalRedirect(request);
+      if (canonicalRedirect) return canonicalRedirect;
+
+      const rootDomain = getRootDomain(url.hostname);
       const botType = detectBotType(request.headers.get("user-agent") || "");
       const INDEXNOW_KEY = env?.BING_INDEXNOW_KEY || CONFIG.defaultIndexNowKey;
 
@@ -112,23 +127,22 @@ export default {
       }
 
       if (url.pathname === "/sitemap.xml") {
-        return await renderDynamicSitemap(url.hostname, env?.SPIDER_STATS_KV);
+        return await renderDynamicSitemap(rootDomain, env?.SPIDER_STATS_KV);
       }
 
       if (url.pathname === "/robots.txt") {
-        return renderRobotsTxt(url.hostname);
+        return renderRobotsTxt(rootDomain);
       }
 
       if (url.pathname === "/rss.xml" || url.pathname === "/feed.xml") {
-        return await renderRssFeed(url.hostname, env?.SPIDER_STATS_KV);
+        return await renderRssFeed(rootDomain, env?.SPIDER_STATS_KV);
       }
 
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        const homeHash = Math.abs(hashCode(url.hostname));
         if (botType && env?.SPIDER_STATS_KV) {
-          ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, "/", botType));
+          ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, "/", botType, rootDomain));
         }
-        return await renderHomePage(url.hostname, env?.SPIDER_STATS_KV, homeHash);
+        return await renderHomePage(rootDomain, env?.SPIDER_STATS_KV);
       }
 
       if (url.pathname === "/spider-dashboard-api") {
@@ -164,26 +178,39 @@ export default {
         if (!isAdminAuthorized(request, env)) {
           return new Response("Not Found", { status: 404 });
         }
-        return await renderMultiBotDashboard(env?.SPIDER_STATS_KV, url.hostname);
+        return await renderMultiBotDashboard(env?.SPIDER_STATS_KV, rootDomain);
+      }
+
+      const categorySlug = parseCategoryRoute(url.pathname);
+      if (categorySlug) {
+        const categoryPath = `/${categorySlug}/`;
+        if (botType && env?.SPIDER_STATS_KV) {
+          ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, categoryPath, botType, rootDomain));
+        }
+        return await renderCategoryPage(rootDomain, env?.SPIDER_STATS_KV, categorySlug);
       }
 
       const currentPath = normalizePath(url.pathname);
       if (!isValidContentPath(currentPath)) {
         return new Response("Not Found", { status: 404 });
       }
-      const pathHash = Math.abs(hashCode(currentPath + url.hostname));
+      const pathHash = Math.abs(hashCode(currentPath + rootDomain));
 
       if (botType && env?.SPIDER_STATS_KV) {
-        ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, currentPath, botType));
+        ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, currentPath, botType, rootDomain));
       }
 
       const targetLink = await loadTargetLink(env?.SPIDER_STATS_KV);
-      const rawTopic = await loadTopic(env?.SPIDER_STATS_KV, url.hostname, currentPath, pathHash);
-      const contentData = buildContentData(rawTopic, targetLink, pathHash, url.hostname);
-      const totalInnerLinks = buildInnerLinks(url.hostname, pathHash);
+      const rawTopic = await loadTopic(env?.SPIDER_STATS_KV, rootDomain, currentPath, pathHash);
+      if (!rawTopic) {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      const contentData = buildContentData(rawTopic, targetLink, pathHash, rootDomain);
+      const totalInnerLinks = buildInnerLinks(rootDomain, pathHash);
 
       return renderSuperSeoPage(
-        url.hostname,
+        rootDomain,
         currentPath,
         contentData,
         targetLink,
@@ -237,19 +264,6 @@ function humanizeContent(text) {
 
 function buildKvContentKey(domain, path) {
   return `content_${getRootDomain(domain)}_${path}`;
-}
-
-function pickFallbackTopic(hostname, currentPath, pathHash) {
-  const seed = Math.abs(hashCode(`${currentPath}|${hostname}|backup|${pathHash}`));
-  const profile = pickKeywordProfile(hostname, seed);
-  const matched = keywordConfig.backupArticles.filter(item => item.pool === profile.poolKey);
-  const list = matched.length ? matched : keywordConfig.backupArticles;
-  const picked = list[seed % list.length];
-  return {
-    title: picked.title,
-    content: humanizeContent(picked.content),
-    fromKv: false
-  };
 }
 
 function getCtaLabel(profile) {
@@ -337,10 +351,9 @@ function formatTargetLinksForDisplay(raw) {
   return parseTargetLinksInput(raw).join("\n");
 }
 
-async function loadTopic(kv, hostname, currentPath, pathHash) {
+async function loadTopic(kv, hostname, currentPath) {
   const contentDomain = getRootDomain(hostname);
-  const fallbackTopic = pickFallbackTopic(hostname, currentPath, pathHash);
-  if (!kv) return fallbackTopic;
+  if (!kv) return null;
 
   try {
     const kvContentKey = buildKvContentKey(contentDomain, currentPath);
@@ -360,7 +373,7 @@ async function loadTopic(kv, hostname, currentPath, pathHash) {
     }
   } catch (e) {}
 
-  return fallbackTopic;
+  return null;
 }
 
 function parseKvContentPayload(raw) {
@@ -472,26 +485,27 @@ function buildInnerLinks(hostname, pathHash) {
   return totalInnerLinks;
 }
 
-async function recordSpiderVisit(kv, url, currentPath, botType) {
+async function recordSpiderVisit(kv, url, currentPath, botType, rootDomain) {
   try {
     const today = new Date().toISOString().split("T")[0];
     const timestamp = Date.now();
+    const canonicalHost = rootDomain || getRootDomain(url.hostname);
 
-    const histKey = `v2log_${today}_${url.hostname}_${botType}`;
+    const histKey = `v2log_${today}_${canonicalHost}_${botType}`;
     const currentHistCount = parseInt(await kv.get(histKey) || "0", 10);
     await kv.put(histKey, String(currentHistCount + 1));
 
-    const liveKey = `live_${timestamp}_${botType}_${url.hostname}`;
+    const liveKey = `live_${timestamp}_${botType}_${canonicalHost}`;
     await kv.put(liveKey, currentPath, { expirationTtl: 300 });
 
-    const detailKey = `v2detail_${today}_${botType}_${timestamp}_${url.hostname}`;
+    const detailKey = `v2detail_${today}_${botType}_${timestamp}_${canonicalHost}`;
     await kv.put(detailKey, JSON.stringify({
       time: timestamp,
       date: today,
       bot: botType,
-      host: url.hostname,
+      host: canonicalHost,
       path: currentPath,
-      fullUrl: `https://${url.hostname}${currentPath}`
+      fullUrl: `https://${canonicalHost}${currentPath}`
     }), { expirationTtl: 604800 });
   } catch(e) {}
 }
@@ -615,6 +629,26 @@ function getCategoryGroups() {
   return groups;
 }
 
+function parseCategoryRoute(pathname) {
+  const normalized = normalizePath(pathname);
+  if (!normalized || normalized === "/index.html") return null;
+
+  const indexMatch = normalized.match(/^\/([a-z0-9-]+)\/index\.html$/i);
+  if (indexMatch) {
+    const slug = indexMatch[1].toLowerCase();
+    return CATEGORY_LABELS[slug] ? slug : null;
+  }
+
+  const singleMatch = normalized.match(/^\/([a-z0-9-]+)$/i);
+  if (!singleMatch) return null;
+  const slug = singleMatch[1].toLowerCase();
+  return CATEGORY_LABELS[slug] ? slug : null;
+}
+
+function getCategoryPaths(categorySlug) {
+  return SEED_PATHS.filter(p => p.startsWith(`/${categorySlug}/`));
+}
+
 function formatRfc822(dateStr) {
   if (!dateStr) return new Date().toUTCString();
   const d = new Date(`${dateStr}T08:00:00Z`);
@@ -638,12 +672,27 @@ async function renderDynamicSitemap(domain, kv) {
 
   const articles = await loadDomainArticles(kv, rootDomain, SEED_PATHS);
   let xmlUrls = "";
+  const groups = getCategoryGroups();
+
+  for (const [seg, group] of Object.entries(groups)) {
+    if (!CATEGORY_LABELS[seg]) continue;
+    const published = group.paths
+      .map(path => ({ path, article: articles.get(path) }))
+      .filter(row => row.article);
+    if (published.length === 0) continue;
+
+    const latest = published
+      .sort((a, b) => String(b.article.updatedAt || b.article.publishedAt || "").localeCompare(String(a.article.updatedAt || a.article.publishedAt || "")))[0];
+    const catLastmod = latest?.article?.updatedAt || latest?.article?.publishedAt || defaultLastmodForPath(group.paths[0]);
+    xmlUrls += `  <url>\n    <loc>https://${escapeHtml(rootDomain)}/${escapeHtml(seg)}/</loc>\n    <lastmod>${catLastmod}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n`;
+  }
 
   SEED_PATHS.forEach((path, index) => {
     const article = articles.get(path);
-    const lastmod = article?.updatedAt || article?.publishedAt || defaultLastmodForPath(path);
+    if (!article) return;
+    const lastmod = article.updatedAt || article.publishedAt || defaultLastmodForPath(path);
     const priority = index < 5 ? "1.0" : index < 15 ? "0.9" : "0.8";
-    const changefreq = article?.updatedAt ? "weekly" : "monthly";
+    const changefreq = article.updatedAt ? "weekly" : "monthly";
     xmlUrls += `  <url>\n    <loc>https://${escapeHtml(rootDomain)}${escapeHtml(path)}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${changefreq}</changefreq>\n    <priority>${priority}</priority>\n  </url>\n`;
   });
 
@@ -670,9 +719,10 @@ function renderRobotsTxt(domain) {
 }
 
 async function renderRssFeed(domain, kv) {
+  const rootDomain = getRootDomain(domain);
   const scanPaths = SEED_PATHS.slice(0, 40);
-  const articles = await loadDomainArticles(kv, domain, scanPaths);
-  const brand = getSiteBrand(domain);
+  const articles = await loadDomainArticles(kv, rootDomain, scanPaths);
+  const brand = getSiteBrand(rootDomain);
 
   const ranked = scanPaths
     .map(path => ({ path, article: articles.get(path) }))
@@ -680,33 +730,21 @@ async function renderRssFeed(domain, kv) {
     .sort((a, b) => String(b.article.updatedAt || b.article.publishedAt || "").localeCompare(String(a.article.updatedAt || a.article.publishedAt || "")))
     .slice(0, 20);
 
-  const fallback = ranked.length ? ranked : scanPaths.slice(0, 10).map(path => {
-    const fallbackTopic = pickFallbackTopic(domain, path, Math.abs(hashCode(path)));
-    return {
-      path,
-      article: {
-        title: fallbackTopic.title,
-        content: fallbackTopic.content,
-        updatedAt: defaultLastmodForPath(path)
-      }
-    };
-  });
-
-  const items = fallback.map(({ path, article }) => {
+  const items = ranked.map(({ path, article }) => {
     const pubDate = formatRfc822(article.updatedAt || article.publishedAt);
     const desc = escapeHtml(String(article.content || "").replace(/\s+/g, " ").slice(0, 180));
-    return `    <item>\n      <title>${escapeHtml(article.title)}</title>\n      <link>https://${escapeHtml(domain)}${escapeHtml(path)}</link>\n      <guid>https://${escapeHtml(domain)}${escapeHtml(path)}</guid>\n      <pubDate>${pubDate}</pubDate>\n      <description>${desc}...</description>\n    </item>`;
+    return `    <item>\n      <title>${escapeHtml(article.title)}</title>\n      <link>https://${escapeHtml(rootDomain)}${escapeHtml(path)}</link>\n      <guid>https://${escapeHtml(rootDomain)}${escapeHtml(path)}</guid>\n      <pubDate>${pubDate}</pubDate>\n      <description>${desc}...</description>\n    </item>`;
   }).join("\n");
 
-  const lastBuild = formatRfc822(fallback[0]?.article?.updatedAt);
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(brand.name)}</title>\n    <link>https://${escapeHtml(domain)}/</link>\n    <description>${escapeHtml(brand.tagline)}</description>\n    <lastBuildDate>${lastBuild}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
+  const lastBuild = formatRfc822(ranked[0]?.article?.updatedAt || ranked[0]?.article?.publishedAt);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(brand.name)}</title>\n    <link>https://${escapeHtml(rootDomain)}/</link>\n    <description>${escapeHtml(brand.tagline)}</description>\n    <lastBuildDate>${lastBuild}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
 
   return new Response(xml, {
     headers: { "content-type": "application/rss+xml;charset=UTF-8", "cache-control": "public, max-age=1800" }
   });
 }
 
-async function renderHomePage(hostname, kv, pathHash) {
+async function renderHomePage(hostname, kv) {
   const brand = getSiteBrand(hostname);
   const theme = {
     bg: "#f4f6f9",
@@ -715,7 +753,6 @@ async function renderHomePage(hostname, kv, pathHash) {
     radius: "8px",
     text: "#333333"
   };
-  const scanPaths = SEED_PATHS.slice(0, 50);
   const articles = await loadDomainArticles(kv, hostname, SEED_PATHS);
   const groups = getCategoryGroups();
 
@@ -723,27 +760,24 @@ async function renderHomePage(hostname, kv, pathHash) {
     .sort((a, b) => String(b[1].updatedAt || b[1].publishedAt || "").localeCompare(String(a[1].updatedAt || a[1].publishedAt || "")))
     .slice(0, 12);
 
-  if (latest.length < 8) {
-    for (const p of scanPaths) {
-      if (latest.length >= 12) break;
-      if (articles.has(p)) continue;
-      const fallbackTopic = pickFallbackTopic(hostname, p, Math.abs(hashCode(p)));
-      latest.push([p, {
-        title: fallbackTopic.title,
-        updatedAt: defaultLastmodForPath(p)
-      }]);
-    }
-  }
-
   const categoryHtml = Object.entries(groups).map(([seg, group]) => {
-    const links = group.paths.slice(0, 6).map(p => `<li><a href="${escapeHtml(p)}">${escapeHtml(pathToLinkLabel(p))}</a></li>`).join("");
-    return `<section class="cat-box"><h2>${escapeHtml(group.label)}</h2><ul>${links}</ul><a class="more" href="${escapeHtml(group.paths[0])}">查看更多 &rarr;</a></section>`;
+    const publishedPaths = group.paths.filter(p => articles.has(p));
+    const previewPaths = publishedPaths.slice(0, 6);
+    const links = previewPaths.length
+      ? previewPaths.map(p => {
+        const article = articles.get(p);
+        return `<li><a href="${escapeHtml(p)}">${escapeHtml(article?.title || pathToLinkLabel(p))}</a></li>`;
+      }).join("")
+      : `<li class="empty">暂无文章</li>`;
+    return `<section class="cat-box"><h2><a href="/${escapeHtml(seg)}/">${escapeHtml(group.label)}</a></h2><ul>${links}</ul><a class="more" href="/${escapeHtml(seg)}/">进入栏目 &rarr;</a></section>`;
   }).join("");
 
-  const latestHtml = latest.map(([p, article]) => {
-    const date = article.updatedAt || article.publishedAt || "";
-    return `<li><a href="${escapeHtml(p)}">${escapeHtml(article.title)}</a>${date ? `<time>${escapeHtml(date)}</time>` : ""}</li>`;
-  }).join("");
+  const latestHtml = latest.length
+    ? latest.map(([p, article]) => {
+      const date = article.updatedAt || article.publishedAt || "";
+      return `<li><a href="${escapeHtml(p)}">${escapeHtml(article.title)}</a>${date ? `<time>${escapeHtml(date)}</time>` : ""}</li>`;
+    }).join("")
+    : `<li class="empty">暂无更新，内容生成中</li>`;
 
   const siteName = escapeHtml(brand.name);
   const siteTagline = escapeHtml(brand.tagline);
@@ -761,7 +795,9 @@ async function renderHomePage(hostname, kv, pathHash) {
     .grid{display:grid;grid-template-columns:2fr 1fr;gap:24px;padding:30px}
     .cats{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .cat-box{background:${theme.accent};border-radius:8px;padding:16px}
-    .cat-box h2{font-size:15px;color:${theme.primary};margin-bottom:10px}
+    .cat-box h2{font-size:15px;margin-bottom:10px}
+    .cat-box h2 a{color:${theme.primary};text-decoration:none}
+    .cat-box .empty,.latest .empty{color:#9ca3af;font-size:13px}
     .cat-box ul{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
     .cat-box a{color:#374151;text-decoration:none;font-size:14px}
     .more{font-size:13px;color:${theme.primary};text-decoration:none}
@@ -779,6 +815,69 @@ async function renderHomePage(hostname, kv, pathHash) {
     <section class="hero"><h1>${siteName}</h1><p>${siteTagline}。汇集软件下载、AI 工具、评测教程与实用指南。</p></section>
     <div class="feeds"><a href="/sitemap.xml">网站地图</a><a href="/rss.xml">RSS 订阅</a></div>
     <div class="grid"><div class="cats">${categoryHtml}</div><aside class="latest"><h2>最近更新</h2><ul>${latestHtml}</ul></aside></div>
+    <footer class="foot">&copy; 2026 ${siteName}</footer>
+  </div></body></html>`;
+
+  return new Response(html, {
+    headers: { "content-type": "text/html;charset=UTF-8", "cache-control": "public, max-age=600" }
+  });
+}
+
+async function renderCategoryPage(hostname, kv, categorySlug) {
+  const brand = getSiteBrand(hostname);
+  const theme = {
+    bg: "#f4f6f9",
+    primary: "#007bff",
+    accent: "#e6f0fa",
+    radius: "8px",
+    text: "#333333"
+  };
+  const categoryLabel = CATEGORY_LABELS[categorySlug] || categorySlug;
+  const categoryPaths = getCategoryPaths(categorySlug);
+  const articles = await loadDomainArticles(kv, hostname, categoryPaths);
+
+  const published = categoryPaths
+    .map(path => ({ path, article: articles.get(path) }))
+    .filter(row => row.article)
+    .sort((a, b) => String(b.article.updatedAt || b.article.publishedAt || "").localeCompare(String(a.article.updatedAt || a.article.publishedAt || "")));
+
+  const listHtml = published.length
+    ? published.map(({ path, article }) => {
+      const date = article.updatedAt || article.publishedAt || "";
+      return `<li><a href="${escapeHtml(path)}">${escapeHtml(article.title)}</a>${date ? `<time datetime="${escapeHtml(date)}">${escapeHtml(date)}</time>` : ""}</li>`;
+    }).join("")
+    : `<li class="empty">该栏目暂无文章，内容生成中</li>`;
+
+  const siteName = escapeHtml(brand.name);
+  const siteTagline = escapeHtml(brand.tagline);
+  const logoText = escapeHtml(brand.logo);
+  const label = escapeHtml(categoryLabel);
+  const faviconUri = buildFaviconDataUri(brand.logo, theme.primary);
+  const canonicalUrl = `https://${escapeHtml(brand.domain)}/${escapeHtml(categorySlug)}/`;
+  const pageTitle = `${label} - ${siteName}`;
+
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${pageTitle}</title><meta name="description" content="${siteName} - ${label}栏目，汇集${label}相关文章与指南。"><link rel="canonical" href="${canonicalUrl}"><link rel="icon" href="${faviconUri}" type="image/svg+xml"><link rel="alternate" type="application/rss+xml" title="${siteName}" href="/rss.xml"><style>
+    *{box-sizing:border-box;margin:0;padding:0}body{background:${theme.bg};color:${theme.text};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7;padding:20px}
+    .wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:${theme.radius};box-shadow:0 10px 30px rgba(0,0,0,.04);overflow:hidden}
+    .head{padding:22px 30px;border-bottom:1px solid ${theme.accent};display:flex;align-items:center;gap:14px}
+    .logo{width:48px;height:48px;border-radius:12px;background:${theme.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+    .crumb{padding:16px 30px 0;font-size:13px;color:#6b7280}
+    .crumb a{color:${theme.primary};text-decoration:none}
+    .hero{padding:20px 30px 10px}
+    .hero h1{font-size:24px;color:${theme.primary};margin-bottom:8px}
+    .hero p{color:#6b7280;font-size:14px}
+    .list{padding:10px 30px 30px}
+    .list ul{list-style:none;display:flex;flex-direction:column;gap:12px}
+    .list li{display:flex;flex-direction:column;gap:4px;padding:14px 16px;background:${theme.accent};border-radius:8px}
+    .list a{color:#111827;text-decoration:none;font-size:15px;font-weight:500}
+    .list time{font-size:12px;color:#9ca3af}
+    .list .empty{color:#9ca3af;font-size:14px;background:transparent;padding:0}
+    .foot{text-align:center;padding:18px;color:#9ca3af;font-size:13px;border-top:1px solid ${theme.accent}}
+  </style></head><body><div class="wrap">
+    <header class="head"><a href="/" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit"><div class="logo">${logoText}</div><div><strong style="color:${theme.primary}">${siteName}</strong><div style="font-size:12px;color:#6b7280">${siteTagline}</div></div></a></header>
+    <nav class="crumb"><a href="/">首页</a> &rsaquo; ${label}</nav>
+    <section class="hero"><h1>${label}</h1><p>共 ${published.length} 篇文章</p></section>
+    <section class="list"><ul>${listHtml}</ul></section>
     <footer class="foot">&copy; 2026 ${siteName}</footer>
   </div></body></html>`;
 
