@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+*.log
+Workers *.txt
+新建文本文档.txt
+*- 副本.txt

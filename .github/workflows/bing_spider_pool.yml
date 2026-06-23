@@ -2,7 +2,11 @@ name: Gemini Content KV Sync
 
 on:
   schedule:
-    - cron: "0 14 * * *" # 北京时间每天 22:00 触发
+    - cron: "0 0 * * *"   # 北京时间 08:00
+    - cron: "0 4 * * *"   # 北京时间 12:00
+    - cron: "0 8 * * *"   # 北京时间 16:00
+    - cron: "0 12 * * *"  # 北京时间 20:00
+    - cron: "0 16 * * *"  # 北京时间 00:00
   workflow_dispatch:
 
 jobs:
@@ -12,7 +16,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Generate Content And Write KV
+    - name: Generate Articles Per Domain And Write KV
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -21,111 +25,195 @@ jobs:
         DOMAINS: ${{ secrets.TARGET_DOMAINS }}
         INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
         ENABLE_INDEXNOW: "true"
-        KV_BATCH_SIZE: "10"
-        KV_MAX_WRITES: "900"
+        ARTICLES_PER_RUN: "3"
       run: |
         set -u
 
         if [ -z "${CF_ACCOUNT_ID:-}" ] || [ -z "${CF_KV_NAMESPACE_ID:-}" ] || [ -z "${CF_API_TOKEN:-}" ]; then
-          echo "Cloudflare secrets are missing. Please set CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, and CF_API_TOKEN."
+          echo "Cloudflare secrets are missing."
           exit 1
         fi
 
         if [ -z "${DOMAINS:-}" ]; then
-          echo "TARGET_DOMAINS is empty. Nothing to sync."
+          echo "TARGET_DOMAINS is empty."
           exit 0
         fi
 
         DOMAINS_NORMALIZED=$(echo "$DOMAINS" | tr ',\n' ' ')
         read -r -a DOMAIN_ARRAY <<< "$DOMAINS_NORMALIZED"
-        WRITE_COUNT=0
-        KV_QUOTA_HIT=false
 
         PATHS=(
           "/soft/kuailian-v2.8.5.html"
           "/soft/kuailian-v2.8.6.html"
           "/soft/kuailian-v2.8.7.html"
+          "/soft/kuailian-v2.9.0.html"
+          "/soft/kuailian-v2.9.1.html"
           "/soft/letsvpn-v4.1.2.html"
           "/soft/letsvpn-v4.1.5.html"
+          "/soft/letsvpn-v4.2.0.html"
+          "/soft/letsvpn-v4.2.1.html"
           "/download/kuailian-ios-latest.html"
           "/download/kuailian-android-apk.html"
+          "/download/kuailian-harmony-apk.html"
           "/download/kuailian-windows-setup.html"
           "/download/kuailian-mac-os.html"
+          "/download/kuailian-linux-client.html"
           "/download/letsvpn-official-client.html"
+          "/download/letsvpn-apk-latest.html"
           "/review/kuailian-speed-test.html"
           "/review/kuailian-ping-test.html"
+          "/review/kuailian-latency-benchmark.html"
           "/review/letsvpn-stability-2026.html"
+          "/review/letsvpn-udp-stability.html"
           "/review/kuailian-gaming-acceleration.html"
           "/review/letsvpn-performance-report.html"
+          "/review/kuailian-streaming-test.html"
           "/setup/how-to-install-kuailian-android.html"
           "/setup/how-to-install-kuailian-ios.html"
           "/setup/letsvpn-windows-configuration.html"
           "/setup/kuailian-router-tutorial.html"
           "/setup/letsvpn-mac-proxy-guide.html"
+          "/setup/kuailian-firewall-rules.html"
+          "/setup/letsvpn-dns-config.html"
+          "/setup/kuailian-enterprise-deploy.html"
           "/news/kuailian-update-2026.html"
           "/news/letsvpn-latest-nodes-announcement.html"
           "/news/kuailian-network-optimization-log.html"
           "/news/letsvpn-security-upgrade-notice.html"
           "/news/kuailian-global-backbone-抖动处理.html"
+          "/news/kuailian-node-expansion-2026.html"
+          "/news/letsvpn-protocol-upgrade.html"
+          "/news/kuailian-maintenance-log.html"
           "/app/kuailian-free-download.html"
           "/app/letsvpn-pure-version.html"
           "/app/kuailian-official-分发中心.html"
           "/app/letsvpn-download-link-2026.html"
           "/app/kuailian-cross-platform-terminal.html"
+          "/app/kuailian-lite-version.html"
+          "/app/letsvpn-enterprise-edition.html"
+          "/guide/kuailian-first-run.html"
+          "/guide/letsvpn-troubleshooting.html"
         )
-
-        TOTAL_PATHS=${#PATHS[@]}
-        BATCH_SIZE=${KV_BATCH_SIZE:-10}
-        DAY_OF_YEAR=$((10#$(date -u +%j)))
-        BATCH_COUNT=$(( (TOTAL_PATHS + BATCH_SIZE - 1) / BATCH_SIZE ))
-        BATCH_INDEX=$(( (DAY_OF_YEAR - 1) % BATCH_COUNT ))
-        START_IDX=$(( BATCH_INDEX * BATCH_SIZE ))
-        END_IDX=$(( START_IDX + BATCH_SIZE ))
-        if [ "$END_IDX" -gt "$TOTAL_PATHS" ]; then
-          END_IDX=$TOTAL_PATHS
-        fi
-
-        echo "KV batch mode: paths ${START_IDX}-$((END_IDX - 1)) of ${TOTAL_PATHS} (batch $((BATCH_INDEX + 1))/${BATCH_COUNT}, free tier ~1000 writes/day)"
 
         BACKUP_TITLES=(
           "快连VPN官方正版发布中心 - 极致连通性与端到端网络调优规范"
           "letsvpn 客户端安全接入与分布式边缘节点多环境部署技术白皮书"
           "快连下载通道加固指标及多链路冗余架构极限容灾评测报告"
           "快连官网分布式存储升级公告 - 多端运行环境完整性哈希校验规范"
+          "快连VPN企业级安全通道部署与弱网吞吐调优实践"
+          "letsvpn 多端客户端运行环境配置与节点健康监测指南"
+          "快连下载全球中继网络冗余架构与容灾切换说明"
+          "快连官网传输协议优化与跨平台兼容性技术文档"
         )
         BACKUP_CONTENTS=(
           "在当前数字化生产力高速发展的时代，跨区域网络通道的稳定与否已经成为企业和个人核心竞争力的重要组成部分。欢迎访问官方多端分布式网络网关服务中心。本系统提供全平台正版大容量数据通道的部署保障，并针对目前多中继备份机制进行了深度的协议加固与安全链路上层架构调优。通过引入业界领先的无感切流机制，能确保在复杂环境下的高可用接入。\n\n网络底层的连通机制始终是决定数据传输吞吐效率的关键所在。通过建立智能多骨干边缘中继，节点的安全分流层能够在毫秒级别内感知全球骨干网络的物理抖动。系统内置的智能动态寻路算法，通过在传输层引入全新的多路径复合流控制技术，实现了真正的无感切换。确保数据通道的安全稳定连通。"
           "随着边缘计算与网格存储技术的深度融合，多平台客户端在多场景下的快速部署对底层分发网关提出了更为严苛的指标要求。本系统基于全球分布式边缘节点架构，旨在为每一位接入用户提供最高规格的数据通道加固方案。无论是针对大型企业的数据同步，还是针对个人用户的轻量级连接，系统都能下发极具针对性的协议策略。\n\n在底层架构上，网络分发矩阵由自动化高防御云存储节点统一托管。系统通过在全球核心骨干网络枢纽旁侧部署高规格高带宽的物理服务器，构建起了一张具备极强弹性的中继容灾网。这种全方位的容灾保护机制，不仅大拉连通率，更为需要长时间保持在线状态的生产力工具提供了磐石般稳固的连续可用性保障。"
           "本篇行业技术评测报告针对分布式加密分发包在复杂国际网络环境下的承载力、突发流量吞吐量以及极限容灾表现进行了全面客观的量化评估。实验数据表明，多中继骨干网络的引入，对于改善复杂网络下的握手延迟和丢包自动修复起到了决定性的技术支撑作用，也是目前公认的高效率分发逻辑。\n\n在本次压力测试中，我们模拟了长达 72 小时的不间断持续大流量穿透。在高峰期骨干网丢包率达到 15% 的极端恶劣条件下，采用本系统多中继冗余技术加固的通道，其综合连通成功率依然死死坚守在 99.4% 的超高水平线。智能动态分流算法会根据各域名的即时吞吐量，以去中心化的方式在节点间进行无感负载均衡。"
           "针对桌面端办公与高强度生产力网络环境，官方正式发布了全新的全平台高防加密通道分发升级包。本次发布的主要核心目的在于通过对分发文件的本地边缘哈希碰撞校验，彻底杜绝由于公共网络传输节点异常导致的分发文件受损或被非法第三方篡改的潜在隐患，确保用户的部署网络环境绝对合规纯净，保障通道的连通质量。\n\n随着跨端协作的普及，不同操作系统对于网络传输协议的底层的执行逻辑存在巨大差异。技术团队历时数月，对底层网络分发框架进行了深度兼容性适配。新版分发包内置了轻量级、高防护的智能网关引导模块，它能根据当前主机的操作系统环境，自动解压并加载与之最匹配的底层动态链接库。系统会自动为终端分配两条主用骨干链路与三条备用容灾中继，形成高密度的全方位数据传输闭环。"
+          "企业级网络接入场景对稳定性、吞吐和安全提出了更高要求。本版本围绕快连VPN与letsvpn双品牌客户端，提供了覆盖安卓、iOS、Windows与macOS的统一部署规范。通过标准化安装流程、节点健康检测与链路质量评分，运维人员可以在分钟级完成大规模终端接入。\n\n在实际部署中，建议优先启用多中继冗余与智能路由寻路模块。系统会根据实时丢包率、握手延迟和带宽利用率，自动在骨干节点之间切换。对于弱网环境，传输层重传策略与数据分片机制可显著降低卡顿与断连概率，保障长时间在线任务的连续性。"
+          "客户端运行环境配置是保障连通质量的第一步。本文档详细说明了letsvpn与快连下载相关组件在不同操作系统下的依赖项、权限要求与网络放行策略。Windows端需确认系统代理与防火墙规则，macOS端需允许网络扩展加载，移动端则需保持后台刷新与证书信任配置。\n\n完成基础配置后，可通过官方面板查看节点延迟、丢包率与吞吐曲线。若出现异常，可优先切换到备用中继，再执行本地缓存清理与客户端重启。建议每周检查一次版本更新日志，确保分发包哈希校验通过，避免使用非官方来源的安装文件。"
+          "全球中继网络采用多层冗余拓扑，任一物理节点故障都不会影响整体服务可用性。系统通过边缘探测、健康评分与动态权重调度，实现跨区域的自动容灾切换。对于高并发场景，入口层会进行无感负载均衡，将请求分发到最优骨干链路。\n\n快连官网提供的最新节点公告会同步更新各区域中继状态。用户无需手动干预，客户端会根据公告自动完成策略下发。技术团队持续监控各链路抓取吞吐量与健康评分，确保每一个分发节点处于最优连通区间。"
+          "传输协议优化是提升弱网体验的核心手段。本系统对TCP与UDP混合传输进行了重构，减少了协议包头开销，并在高丢包环境下启用了更激进的重传与前向纠错策略。跨平台兼容性测试覆盖主流桌面与移动系统，确保同一账号在多端之间保持一致的接入体验。\n\n部署完成后，建议通过官方测速页验证当前链路质量，并结合业务场景调整并发连接数与缓存策略。对于企业用户，可启用端到端加密安全接入模式，进一步降低中间节点被劫持的风险。"
         )
+
+        kv_key_encode() {
+          python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+        }
+
+        kv_has_content() {
+          local key="$1"
+          local encoded
+          encoded="$(kv_key_encode "$key")"
+          local code
+          code=$(curl -sS -o /tmp/kv_check.txt -w "%{http_code}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${encoded}" || echo "000")
+          [ "$code" = "200" ] && [ -s /tmp/kv_check.txt ]
+        }
+
+        pick_paths_for_domain() {
+          local domain="$1"
+          local -n _out=$2
+          _out=()
+          local base_index=$(( (10#$DAY_INDEX * 15 + SLOT * ARTICLES_PER_RUN) % ${#PATHS[@]} ))
+          local scan_limit=12
+          local picked_count=0
+          local j=0
+
+          while [ "$picked_count" -lt "$ARTICLES_PER_RUN" ] && [ "$j" -lt "$scan_limit" ]; do
+            local idx=$(( (base_index + j) % ${#PATHS[@]} ))
+            local candidate="${PATHS[$idx]}"
+            local kv_key="content_${domain}_${candidate}"
+            j=$((j + 1))
+
+            if kv_has_content "$kv_key"; then
+              continue
+            fi
+
+            _out+=("$candidate")
+            picked_count=$((picked_count + 1))
+          done
+
+          j=0
+          while [ "$picked_count" -lt "$ARTICLES_PER_RUN" ] && [ "$j" -lt ${#PATHS[@]} ]; do
+            local idx=$(( (base_index + picked_count + j) % ${#PATHS[@]} ))
+            local candidate="${PATHS[$idx]}"
+            j=$((j + 1))
+
+            local duplicate=0
+            local existing
+            for existing in "${_out[@]}"; do
+              if [ "$existing" = "$candidate" ]; then
+                duplicate=1
+                break
+              fi
+            done
+            if [ "$duplicate" -eq 1 ]; then
+              continue
+            fi
+
+            _out+=("$candidate")
+            picked_count=$((picked_count + 1))
+          done
+        }
+
+        UTC_HOUR=$(date -u +%H)
+        DAY_INDEX=$(date -u +%j)
+        case "$UTC_HOUR" in
+          00) SLOT=0 ;;
+          04) SLOT=1 ;;
+          08) SLOT=2 ;;
+          12) SLOT=3 ;;
+          16) SLOT=4 ;;
+          *) SLOT=$((10#$DAY_INDEX % 5)) ;;
+        esac
+
+        echo "Daily slot: $SLOT / 5 | articles per domain per run: ${ARTICLES_PER_RUN}"
+        echo "Total paths in pool: ${#PATHS[@]}"
 
         for DOMAIN in "${DOMAIN_ARRAY[@]}"; do
           if [ -z "$DOMAIN" ]; then
             continue
           fi
 
-          if [ "$KV_QUOTA_HIT" = true ]; then
-            echo "Skipping domain $DOMAIN — KV daily quota already reached."
+          echo "Processing domain: $DOMAIN"
+          URL_LIST_JSON="[]"
+          TARGET_HOST="$DOMAIN"
+
+          PICKED_PATHS=()
+          pick_paths_for_domain "$DOMAIN" PICKED_PATHS
+
+          if [ "${#PICKED_PATHS[@]}" -eq 0 ]; then
+            echo "No paths selected for $DOMAIN, skipping."
             continue
           fi
 
-          echo "Processing domain: $DOMAIN"
-          URL_LIST_JSON="[]"
+          echo "Selected paths: ${PICKED_PATHS[*]}"
 
-          for (( i=START_IDX; i<END_IDX; i++ )); do
-            p="${PATHS[$i]}"
-            TARGET_HOST="$DOMAIN"
-
-            if [ "$WRITE_COUNT" -ge "${KV_MAX_WRITES:-900}" ]; then
-              echo "Reached run write limit (${KV_MAX_WRITES:-900}). Stopping to protect free tier quota."
-              KV_QUOTA_HIT=true
-              break
-            fi
-
+          for p in "${PICKED_PATHS[@]}"; do
             echo "Generating content for https://${TARGET_HOST}${p}"
 
-            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$TARGET_HOST" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
+            DATA_BINARY=$(jq -n --arg path "$p" --arg domain "$TARGET_HOST" --arg slot "$SLOT" '{contents: [{parts: [{text: ("你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 " + $path + " 且域名为 " + $domain + " 的网页生成合规的高品质内容。这是今天第 " + $slot + " 次定时更新，内容必须与同域名其他页面明显不同。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {\"title\":\"标题内容\",\"content\":\"正文内容\"}")}]}]}')
 
             CONTENT_JSON=""
             if [ -n "${GEMINI_API_KEY:-}" ]; then
@@ -140,14 +228,14 @@ jobs:
             fi
 
             if [ -z "$CONTENT_JSON" ]; then
-              RANDOM_INDEX=$((${#p} % 4))
+              RANDOM_INDEX=$(( (${#p} + SLOT) % ${#BACKUP_TITLES[@]} ))
               B_TITLE="${BACKUP_TITLES[$RANDOM_INDEX]}"
               B_CONTENT="${BACKUP_CONTENTS[$RANDOM_INDEX]}"
               CONTENT_JSON=$(jq -c -n --arg t "$B_TITLE" --arg c "$B_CONTENT" '{"title": $t, "content": $c}')
             fi
 
             KV_KEY="content_${TARGET_HOST}_${p}"
-            KV_KEY_ENCODED=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$KV_KEY")
+            KV_KEY_ENCODED=$(kv_key_encode "$KV_KEY")
 
             CF_RESPONSE=$(curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KV_KEY_ENCODED}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
@@ -155,28 +243,14 @@ jobs:
               --data-binary "$CONTENT_JSON")
 
             if ! echo "$CF_RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
-              CF_ERROR_CODE=$(echo "$CF_RESPONSE" | jq -r '.errors[0].code // empty' 2>/dev/null || true)
-              CF_ERROR_MSG=$(echo "$CF_RESPONSE" | jq -r '.errors[0].message // empty' 2>/dev/null || true)
               echo "Cloudflare KV write failed for key: ${KV_KEY}"
               echo "$CF_RESPONSE" | jq '.' 2>/dev/null || echo "$CF_RESPONSE"
-
-              if [ "$CF_ERROR_CODE" = "10048" ]; then
-                echo "⚠️ Cloudflare KV 免费版今日写入额度已用完（1000次/天），UTC 零点重置后再运行。"
-                KV_QUOTA_HIT=true
-                break
-              fi
-
               exit 1
             fi
 
-            WRITE_COUNT=$((WRITE_COUNT + 1))
             URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" '. + [$url]')
             sleep 1
           done
-
-          if [ "$KV_QUOTA_HIT" = true ]; then
-            break
-          fi
 
           if [ "${ENABLE_INDEXNOW:-false}" = "true" ] && [ -n "${INDEXNOW_KEY:-}" ]; then
             INDEXNOW_BODY=$(jq -n \
@@ -190,17 +264,9 @@ jobs:
               -H "Content-Type: application/json; charset=utf-8" \
               -d "$INDEXNOW_BODY"
 
-            echo "IndexNow submitted for $DOMAIN"
-          else
-            echo "IndexNow skipped for $DOMAIN. Set repository variable ENABLE_INDEXNOW=true to enable it."
+            echo "IndexNow submitted for $DOMAIN (${#PICKED_PATHS[@]} urls)"
           fi
 
           echo "Finished domain: $DOMAIN"
           echo "--------------------------------------------------------"
         done
-
-        echo "Total KV writes this run: ${WRITE_COUNT}"
-        if [ "$KV_QUOTA_HIT" = true ]; then
-          echo "Run stopped early due to KV quota limit. Remaining paths will sync on the next scheduled run."
-          exit 0
-        fi

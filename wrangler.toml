@@ -1,0 +1,81 @@
+name = "bingzz"
+account_id = "6b7c6e17c84b141e12bb8cae44579ca3"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+[[routes]]
+pattern = "mixdvr.com/*"
+zone_name = "mixdvr.com"
+
+[[routes]]
+pattern = "kuailian--1.com/*"
+zone_name = "kuailian--1.com"
+
+[[routes]]
+pattern = "kuailian-app.cc/*"
+zone_name = "kuailian-app.cc"
+
+[[routes]]
+pattern = "kuailian-pc.vip/*"
+zone_name = "kuailian-pc.vip"
+
+[[routes]]
+pattern = "kuailian-cn.vip/*"
+zone_name = "kuailian-cn.vip"
+
+[[routes]]
+pattern = "kuai-lian.xyz/*"
+zone_name = "kuai-lian.xyz"
+
+[[routes]]
+pattern = "ardlervillagetrust.org"
+custom_domain = true
+
+[[routes]]
+pattern = "todayscatholicpueblo.org"
+custom_domain = true
+
+[[routes]]
+pattern = "reviewbooking.com"
+custom_domain = true
+
+[[routes]]
+pattern = "perfectxml.com/*"
+zone_name = "perfectxml.com"
+
+[[routes]]
+pattern = "booking365.net"
+custom_domain = true
+
+[[routes]]
+pattern = "njreporter.org"
+custom_domain = true
+
+[[routes]]
+pattern = "test-deepseek.com"
+custom_domain = true
+
+[[routes]]
+pattern = "forum-deepseek.com"
+custom_domain = true
+
+[[routes]]
+pattern = "aideep-seek.icu/*"
+zone_name = "aideep-seek.icu"
+
+[[routes]]
+pattern = "deepseek-cn.vip/*"
+zone_name = "deepseek-cn.vip"
+
+[[routes]]
+pattern = "deepseek-v4.it.com/*"
+zone_name = "deepseek-v4.it.com"
+
+[[kv_namespaces]]
+binding = "SPIDER_STATS_KV"
+id = "535c3b6d9bab4acfa5445e9ad854aec4"
+
+[vars]
+BING_INDEXNOW_KEY = "1123858585"
+ADMIN_TEST_TOKEN = "mysecrettoken999"
