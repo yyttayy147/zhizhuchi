@@ -1,3 +1,5 @@
+import keywordConfig from "./keyword-pools.json";
+
 // ==================== 1. 核心配置 ====================
 const CONFIG = {
   fallbackLink: "https://kuailian-letsv.com/",
@@ -23,7 +25,25 @@ const CONFIG = {
     "deepseek-v4.it.com"
   ],
 
-  coreKeywords: ["快连VPN", "letsvpn", "快连下载", "快连官网"],
+  domainBrands: {
+    "mixdvr.com": { name: "MixDVR 影音技术网", tagline: "影音设备与网络接入技术文档", logo: "MV" },
+    "kuailian--1.com": { name: "快连VPN 官方资讯站", tagline: "快连客户端下载与使用指南", logo: "快连" },
+    "kuailian-app.cc": { name: "快连 App 下载中心", tagline: "移动端官方安装包与安全分发", logo: "App" },
+    "kuailian-pc.vip": { name: "快连 PC 客户端站", tagline: "Windows / Mac 桌面版部署文档", logo: "PC" },
+    "kuailian-cn.vip": { name: "快连中国版门户", tagline: "国内用户网络接入技术参考", logo: "CN" },
+    "kuai-lian.xyz": { name: "快连网络技术站", tagline: "连通性调优与节点评测报告", logo: "KL" },
+    "ardlervillagetrust.org": { name: "Ardler Village 社区资讯", tagline: "社区公告与本地服务信息", logo: "AV" },
+    "todayscatholicpueblo.org": { name: "Catholic Pueblo 资讯", tagline: "社区新闻与活动发布", logo: "CP" },
+    "reviewbooking.com": { name: "ReviewBooking 预订评测", tagline: "出行预订与产品体验报告", logo: "RB" },
+    "booking365.net": { name: "Booking365 旅游指南", tagline: "全年出行规划与预订参考", logo: "B3" },
+    "perfectxml.com": { name: "PerfectXML 技术文档", tagline: "结构化数据与开发规范", logo: "XML" },
+    "njreporter.org": { name: "NJ Reporter 新闻资讯", tagline: "本地新闻与专题报道", logo: "NJ" },
+    "test-deepseek.com": { name: "DeepSeek 技术实验室", tagline: "大模型部署与 API 接入指南", logo: "DS" },
+    "forum-deepseek.com": { name: "DeepSeek 开发者论坛", tagline: "模型应用讨论与技术交流", logo: "DF" },
+    "aideep-seek.icu": { name: "AI DeepSeek 中文站", tagline: "人工智能模型中文技术文档", logo: "AI" },
+    "deepseek-cn.vip": { name: "DeepSeek 中国门户", tagline: "国产大模型官方资讯聚合", logo: "深" },
+    "deepseek-v4.it.com": { name: "DeepSeek V4 发布中心", tagline: "新一代模型版本更新公告", logo: "V4" }
+  },
 
   tailAttributes: [
     "官方正版安装包", "最新安卓APK下载", "iOS苹果正版分发中心", "PC电脑版客户端运行环境",
@@ -71,7 +91,8 @@ const SEED_PATHS = [
   "/app/kuailian-free-download.html", "/app/letsvpn-pure-version.html", "/app/kuailian-official-分发中心.html",
   "/app/letsvpn-download-link-2026.html", "/app/kuailian-cross-platform-terminal.html",
   "/app/kuailian-lite-version.html", "/app/letsvpn-enterprise-edition.html",
-  "/guide/kuailian-first-run.html", "/guide/letsvpn-troubleshooting.html"
+  "/guide/kuailian-first-run.html", "/guide/letsvpn-troubleshooting.html",
+  ...keywordConfig.extraPaths
 ];
 
 // ==================== 2. 主程序核心逻辑 ====================
@@ -136,10 +157,11 @@ export default {
       const pathHash = Math.abs(hashCode(currentPath + url.hostname + todayStr));
       const targetLink = await loadTargetLink(env?.SPIDER_STATS_KV);
       const rawTopic = await loadTopic(env?.SPIDER_STATS_KV, url.hostname, currentPath, pathHash);
-      const contentData = buildContentData(rawTopic, targetLink, pathHash);
+      const contentData = buildContentData(rawTopic, targetLink, pathHash, url.hostname);
       const totalInnerLinks = buildInnerLinks(url.hostname, pathHash);
 
       return renderSuperSeoPage(
+        url.hostname,
         currentPath,
         contentData,
         targetLink,
@@ -229,7 +251,8 @@ async function loadTopic(kv, hostname, currentPath, pathHash) {
     if (parsedTopic?.title && parsedTopic?.content) {
       return {
         title: parsedTopic.title,
-        content: parsedTopic.content
+        content: parsedTopic.content,
+        fromKv: true
       };
     }
   } catch (e) {}
@@ -255,13 +278,47 @@ function parseKvContentPayload(raw) {
   return null;
 }
 
-function buildContentData(rawTopic, targetLink, pathHash) {
-  const coreWord = CONFIG.coreKeywords[pathHash % CONFIG.coreKeywords.length];
-  const tailAttr = CONFIG.tailAttributes[(pathHash + 2) % CONFIG.tailAttributes.length];
+function pickKeywordProfile(hostname, seed) {
+  const rootDomain = getRootDomain(hostname);
+  const bias = keywordConfig.domainBias[rootDomain] || Object.keys(keywordConfig.pools);
+  const poolKey = bias[Math.abs(seed) % bias.length];
+  const pool = keywordConfig.pools[poolKey];
+  const kwIdx = Math.abs(seed + 3) % pool.keywords.length;
+  const tailIdx = Math.abs(seed + 7) % pool.tails.length;
+  const imgIdx = Math.abs(seed + 11) % pool.imageQueries.length;
 
   return {
-    title: `${coreWord}${tailAttr} - ${rawTopic.title}`,
-    content: injectTargetKeywords(rawTopic.content, targetLink, pathHash)
+    poolKey,
+    primary: pool.keywords[kwIdx],
+    secondary: pool.keywords[(kwIdx + 1) % pool.keywords.length],
+    tertiary: pool.keywords[(kwIdx + 2) % pool.keywords.length],
+    tail: pool.tails[tailIdx],
+    imageQuery: pool.imageQueries[imgIdx],
+    imageQuery2: pool.imageQueries[(imgIdx + 1) % pool.imageQueries.length],
+    metaKeywords: [
+      pool.keywords[kwIdx],
+      pool.keywords[(kwIdx + 1) % pool.keywords.length],
+      pool.keywords[(kwIdx + 2) % pool.keywords.length],
+      pool.keywords[(kwIdx + 3) % pool.keywords.length]
+    ]
+  };
+}
+
+function buildContentData(rawTopic, targetLink, pathHash, hostname) {
+  const profile = pickKeywordProfile(hostname, pathHash);
+
+  if (rawTopic.fromKv) {
+    return {
+      title: rawTopic.title,
+      content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile),
+      keywordProfile: profile
+    };
+  }
+
+  return {
+    title: `${profile.primary}${profile.tail} - ${rawTopic.title}`,
+    content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile),
+    keywordProfile: profile
   };
 }
 
@@ -270,11 +327,10 @@ function buildInnerLinks(hostname, pathHash) {
 
   for (let i = 0; i < 5; i++) {
     const pIndex = (pathHash + i) % SEED_PATHS.length;
-    const randCore = CONFIG.coreKeywords[(pathHash + i) % CONFIG.coreKeywords.length];
-    const randAttr = CONFIG.tailAttributes[(pathHash + i + 1) % CONFIG.tailAttributes.length];
+    const profile = pickKeywordProfile(hostname, pathHash + i * 17);
 
     totalInnerLinks.push({
-      name: `${randCore}${randAttr}`,
+      name: `${profile.primary}${profile.tail}`,
       url: `https://${hostname}${SEED_PATHS[pIndex]}`
     });
   }
@@ -283,15 +339,14 @@ function buildInnerLinks(hostname, pathHash) {
   for (let i = 0; i < 5; i++) {
     const targetDomain = alternativeDomains[i % alternativeDomains.length] || "mixdvr.com";
     const pIndex = (pathHash + i + 3) % SEED_PATHS.length;
-    const randCore = CONFIG.coreKeywords[(pathHash + i + 2) % CONFIG.coreKeywords.length];
-    const randAttr = CONFIG.tailAttributes[(pathHash + i + 3) % CONFIG.tailAttributes.length];
+    const profile = pickKeywordProfile(targetDomain, pathHash + i * 23);
 
     const targetUrl = (pathHash + i) % 3 === 0
       ? `https://${targetDomain}/`
       : `https://${targetDomain}${SEED_PATHS[pIndex]}`;
 
     totalInnerLinks.push({
-      name: `${randCore}${randAttr}`,
+      name: `${profile.primary}${profile.tail}`,
       url: targetUrl
     });
   }
@@ -341,15 +396,43 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+function getRootDomain(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/^www\./, "");
+  return CONFIG.domainCluster.find(domain => host === domain || host.endsWith(`.${domain}`)) || host;
+}
 
-function injectTargetKeywords(text, targetLink, seed) {
+function getSiteBrand(hostname) {
+  const rootDomain = getRootDomain(hostname);
+  const configured = CONFIG.domainBrands[rootDomain];
+  if (configured) return { ...configured, domain: rootDomain };
+
+  const label = rootDomain.split(".")[0].replace(/[-_]/g, " ");
+  const prettyName = label.charAt(0).toUpperCase() + label.slice(1);
+  return {
+    domain: rootDomain,
+    name: `${prettyName} 技术资讯`,
+    tagline: "网络接入与技术文档中心",
+    logo: prettyName.slice(0, 2).toUpperCase() || "站"
+  };
+}
+
+function buildFaviconDataUri(logoText, color) {
+  const text = String(logoText || "站").slice(0, 3);
+  const fontSize = text.length > 2 ? 14 : 18;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${color}"/><text x="32" y="40" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${text}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+
+function injectTargetKeywords(text, targetLink, seed, profile) {
   const paragraphs = String(text || "").split("\n\n");
   const safeTargetLink = escapeHtml(targetLink);
+  const pool = keywordConfig.pools[profile.poolKey];
 
   for (let i = 0; i < paragraphs.length; i++) {
     if (paragraphs[i].trim().length > 30) {
-      const coreWord = CONFIG.coreKeywords[(seed + i) % CONFIG.coreKeywords.length];
-      const tailAttr = CONFIG.tailAttributes[(seed + i + 1) % CONFIG.tailAttributes.length];
+      const coreWord = [profile.primary, profile.secondary, profile.tertiary][i % 3];
+      const tailAttr = pool.tails[(seed + i + 1) % pool.tails.length];
       const fullKw = `${coreWord}${tailAttr}`;
       const midPoint = Math.floor(paragraphs[i].length / 2);
       const anchorHtml = ` <a href="${safeTargetLink}" style="color:inherit; font-weight:700; text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(fullKw)}</a> `;
@@ -387,14 +470,14 @@ function renderRobotsTxt(domain) {
 function renderRssFeed(domain) {
   const todayStr = new Date().toISOString();
   const items = SEED_PATHS.slice(0, 20).map((path, index) => {
-    const coreWord = CONFIG.coreKeywords[index % CONFIG.coreKeywords.length];
-    const tailAttr = CONFIG.tailAttributes[index % CONFIG.tailAttributes.length];
+    const profile = pickKeywordProfile(domain, index + 5);
     const topic = CONFIG.topics[index % CONFIG.topics.length];
-    const title = `${coreWord}${tailAttr} - ${topic.title}`;
+    const title = `${profile.primary}${profile.tail} - ${topic.title}`;
     return `    <item>\n      <title>${escapeHtml(title)}</title>\n      <link>https://${escapeHtml(domain)}${escapeHtml(path)}</link>\n      <guid>https://${escapeHtml(domain)}${escapeHtml(path)}</guid>\n      <pubDate>${todayStr}</pubDate>\n      <description>${escapeHtml(topic.content.substring(0, 180))}...</description>\n    </item>`;
   }).join("\n");
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(domain)} 技术更新</title>\n    <link>https://${escapeHtml(domain)}/</link>\n    <description>网络接入与分发技术文档更新</description>\n    <lastBuildDate>${todayStr}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
+  const brand = getSiteBrand(domain);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">\n  <channel>\n    <title>${escapeHtml(brand.name)}</title>\n    <link>https://${escapeHtml(domain)}/</link>\n    <description>${escapeHtml(brand.tagline)}</description>\n    <lastBuildDate>${todayStr}</lastBuildDate>\n${items}\n  </channel>\n</rss>`;
 
   return new Response(xml, {
     headers: { "content-type": "application/rss+xml;charset=UTF-8", "cache-control": "public, max-age=1800" }
@@ -451,13 +534,23 @@ function getLayoutConfig(pathHash) {
   return { templateId, theme, variant, heading };
 }
 
-function renderSuperSeoPage(currentPath, data, targetLink, totalInnerLinks, pathHash) {
+function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerLinks, pathHash) {
   const { theme, variant, heading } = getLayoutConfig(pathHash);
-  const title = escapeHtml(data.title);
+  const brand = getSiteBrand(hostname);
+  const pageTitle = escapeHtml(data.title);
+  const siteName = escapeHtml(brand.name);
+  const siteTagline = escapeHtml(brand.tagline);
+  const siteDomain = escapeHtml(brand.domain);
+  const logoText = escapeHtml(brand.logo);
+  const fullTitle = `${pageTitle} | ${siteName}`;
+  const canonicalUrl = `https://${siteDomain}${escapeHtml(currentPath)}`;
+  const faviconUri = buildFaviconDataUri(brand.logo, theme.primary);
   const content = data.content;
   const safeTargetLink = escapeHtml(targetLink);
-  const imgKeyword = String(data.title || "").split(" ")[0] || "快连VPN";
-  const bingImgSrc = `https://tse-mm.bing.com/th?q=${encodeURIComponent(imgKeyword)}`;
+  const profile = data.keywordProfile || pickKeywordProfile(hostname, pathHash);
+  const metaKeywords = escapeHtml(profile.metaKeywords.join(", "));
+  const bingImgSrc = `https://tse-mm.bing.com/th?q=${encodeURIComponent(profile.imageQuery)}`;
+  const bingImgSrc2 = `https://tse-mm.bing.com/th?q=${encodeURIComponent(profile.imageQuery2)}`;
 
   const linkListHtml = totalInnerLinks
     .map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`)
@@ -470,15 +563,17 @@ function renderSuperSeoPage(currentPath, data, targetLink, totalInnerLinks, path
   const ctaClass = variant.cta === "outline" ? "btn btn-outline" : variant.cta === "block" ? "btn btn-block" : "btn";
   const ctaHtml = `<a href="${safeTargetLink}" class="${ctaClass}" rel="nofollow">进入官方分发端</a>`;
 
-  const heroHtml = variant.hero === "banner"
-    ? `<section class="hero-banner"><h1>${title}</h1><p>官方正版组件安全分发与网络调优文档中心</p>${ctaHtml}</section>`
-    : variant.hero === "card"
-      ? `<section class="hero-card"><h1>${title}</h1>${ctaHtml}</section>`
-      : variant.hero === "inline"
-        ? `<header class="hero-inline"><h1>${title}</h1></header>`
-        : `<header class="hero-top"><h1>${title}</h1></header>`;
+  const siteHeaderHtml = `<header class="site-header"><a class="site-brand" href="/"><span class="site-logo">${logoText}</span><span class="site-meta"><strong class="site-name">${siteName}</strong><span class="site-tagline">${siteTagline}</span></span></a></header>`;
 
-  const imgHtml = `<div class="img-box"><img src="${bingImgSrc}" alt="${title}" loading="lazy"></div>`;
+  const heroHtml = variant.hero === "banner"
+    ? `<section class="hero-banner"><h1>${pageTitle}</h1><p>${siteTagline}</p>${ctaHtml}</section>`
+    : variant.hero === "card"
+      ? `<section class="hero-card"><h1>${pageTitle}</h1>${ctaHtml}</section>`
+      : variant.hero === "inline"
+        ? `<header class="hero-inline"><h1>${pageTitle}</h1></header>`
+        : `<header class="hero-top"><h1>${pageTitle}</h1></header>`;
+
+  const imgHtml = `<div class="img-row"><div class="img-box"><img src="${bingImgSrc}" alt="${escapeHtml(profile.primary)}" loading="lazy"></div><div class="img-box"><img src="${bingImgSrc2}" alt="${escapeHtml(profile.secondary)}" loading="lazy"></div></div>`;
   const articleHtml = `<h2 class="section-title">${escapeHtml(heading)}</h2><article class="content-text">${content}</article>${imgHtml}`;
 
   let linksPanelHtml = "";
@@ -507,22 +602,42 @@ function renderSuperSeoPage(currentPath, data, targetLink, totalInnerLinks, path
   }
 
   if (variant.sidebar !== "bottom" && variant.sidebar !== "none") {
-    bodyLayout = `<div class="container">${variant.hero === "top" ? heroHtml : ""}${bodyLayout}</div>`;
+    bodyLayout = `<div class="container">${siteHeaderHtml}${variant.hero === "top" ? heroHtml : ""}${bodyLayout}</div>`;
   } else if (variant.sidebar === "none") {
-    bodyLayout = `<div class="container">${bodyLayout}</div>`;
+    bodyLayout = `<div class="container">${siteHeaderHtml}${bodyLayout}</div>`;
   } else {
-    bodyLayout = `<div class="container">${bodyLayout}</div>`;
+    bodyLayout = `<div class="container">${siteHeaderHtml}${bodyLayout}</div>`;
   }
+
+  const schemaJson = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: data.title,
+    description: `${brand.tagline} - ${data.title}`,
+    url: `https://${brand.domain}${currentPath}`,
+    isPartOf: {
+      "@type": "WebSite",
+      name: brand.name,
+      url: `https://${brand.domain}/`
+    }
+  });
 
   const baseCss = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: ${theme.bg}; color: ${theme.text}; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.8; padding: 20px; }
     .container { max-width: 1100px; margin: 20px auto; background: ${theme.container}; border-radius: ${theme.radius}; box-shadow: 0 10px 30px rgba(0,0,0,0.04); overflow: hidden; }
+    .site-header { padding: 18px 30px; border-bottom: 1px solid ${theme.accent}; background: #fff; }
+    .site-brand { display: flex; align-items: center; gap: 14px; text-decoration: none; color: inherit; }
+    .site-logo { width: 46px; height: 46px; border-radius: 12px; background: ${theme.primary}; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.5px; }
+    .site-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .site-name { font-size: 17px; color: ${theme.primary}; line-height: 1.3; }
+    .site-tagline { font-size: 12px; color: #6b7280; line-height: 1.4; }
     h1 { color: ${theme.primary}; font-size: 24px; line-height: 1.4; }
     .section-title { font-size: 18px; color: ${theme.primary}; margin: 0 0 15px; }
     .content-text { font-size: 15px; color: #374151; text-align: justify; }
-    .img-box { width: 100%; border-radius: 8px; overflow: hidden; margin: 25px 0; background: #f3f4f6; border: 1px solid ${theme.accent}; }
-    .img-box img { width: 100%; max-height: 360px; object-fit: cover; display: block; }
+    .img-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 25px 0; }
+    .img-box { width: 100%; border-radius: 8px; overflow: hidden; background: #f3f4f6; border: 1px solid ${theme.accent}; }
+    .img-box img { width: 100%; max-height: 280px; object-fit: cover; display: block; }
     .btn { display: inline-block; padding: 14px 36px; background: ${theme.primary}; color: #fff; text-decoration: none; border-radius: 30px; font-weight: bold; }
     .btn-outline { background: transparent; color: ${theme.primary}; border: 2px solid ${theme.primary}; }
     .btn-block { display: block; text-align: center; width: 100%; }
@@ -541,9 +656,10 @@ function renderSuperSeoPage(currentPath, data, targetLink, totalInnerLinks, path
     .link-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .link-chip { display: block; padding: 10px; background: #fff; border-radius: 6px; border: 1px solid ${theme.accent}; }
     .link-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+    .site-footer { text-align: center; padding: 20px; color: #9ca3af; font-size: 13px; }
   `;
 
-  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title}</title><meta name="keywords" content="${title}, 快连VPN, letsvpn, 快连下载, 快连官网"><meta name="description" content="本页面提供关于${title}的核心系统总览。"><link rel="alternate" type="application/rss+xml" title="RSS" href="/rss.xml"><style>${baseCss}@media(max-width:800px){.layout-two-col,.layout-two-col.reverse,.link-columns,.link-grid{grid-template-columns:1fr}}</style></head><body>${bodyLayout}<footer style="text-align:center;padding:20px;color:#9ca3af;font-size:13px;">&copy; 2026 官方云分发总控制台</footer></body></html>`;
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fullTitle}</title><meta name="keywords" content="${pageTitle}, ${siteName}, ${metaKeywords}"><meta name="description" content="${siteName} - ${siteTagline}。${pageTitle}"><link rel="canonical" href="${canonicalUrl}"><link rel="icon" href="${faviconUri}" type="image/svg+xml"><meta property="og:site_name" content="${siteName}"><meta property="og:title" content="${pageTitle}"><meta property="og:description" content="${siteTagline}"><meta property="og:url" content="${canonicalUrl}"><meta property="og:type" content="article"><meta property="og:image" content="${bingImgSrc}"><link rel="alternate" type="application/rss+xml" title="${siteName}" href="/rss.xml"><script type="application/ld+json">${schemaJson}</script><style>${baseCss}@media(max-width:800px){.layout-two-col,.layout-two-col.reverse,.link-columns,.link-grid,.img-row{grid-template-columns:1fr}.site-brand{align-items:flex-start}}</style></head><body>${bodyLayout}<footer class="site-footer">&copy; 2026 ${siteName} &middot; ${siteDomain}</footer></body></html>`;
 
   return new Response(html, {
     headers: { "content-type": "text/html;charset=UTF-8", "cache-control": "public, max-age=600" }

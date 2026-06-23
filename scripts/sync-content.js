@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { buildGeminiPrompt, pickBackupArticle, getAllPaths } = require("./keyword-utils");
 
 const CF_ACCOUNT_ID = "6b7c6e17c84b141e12bb8cae44579ca3";
 const CF_KV_NAMESPACE_ID = "535c3b6d9bab4acfa5445e9ad854aec4";
@@ -8,7 +9,7 @@ const ARTICLES_PER_RUN = Number(process.env.ARTICLES_PER_RUN || 3);
 
 const DOMAINS = (process.env.DOMAINS || `mixdvr.com kuailian--1.com kuailian-app.cc kuailian-pc.vip kuailian-cn.vip kuai-lian.xyz ardlervillagetrust.org todayscatholicpueblo.org reviewbooking.com perfectxml.com booking365.net njreporter.org test-deepseek.com forum-deepseek.com aideep-seek.icu deepseek-cn.vip deepseek-v4.it.com`).split(/\s+/).filter(Boolean);
 
-const PATHS = [
+const BASE_PATHS = [
   "/soft/kuailian-v2.8.5.html","/soft/kuailian-v2.8.6.html","/soft/kuailian-v2.8.7.html",
   "/soft/kuailian-v2.9.0.html","/soft/kuailian-v2.9.1.html",
   "/soft/letsvpn-v4.1.2.html","/soft/letsvpn-v4.1.5.html","/soft/letsvpn-v4.2.0.html","/soft/letsvpn-v4.2.1.html",
@@ -30,12 +31,7 @@ const PATHS = [
   "/guide/kuailian-first-run.html","/guide/letsvpn-troubleshooting.html"
 ];
 
-const BACKUPS = [
-  { title: "快连VPN官方正版发布中心 - 极致连通性与端到端网络调优规范", content: "欢迎访问官方多端分布式网络网关服务中心。本系统提供全平台正版大容量数据通道的部署保障，并针对目前多中继备份机制进行了深度的协议加固与安全链路上层架构调优。" },
-  { title: "letsvpn 客户端安全接入与分布式边缘节点多环境部署技术白皮书", content: "本系统基于全球分布式边缘节点架构，旨在为每一位接入用户提供最高规格的数据通道加固方案。无论是针对大型企业的数据同步，还是针对个人用户的轻量级连接，系统都能下发极具针对性的协议策略。" },
-  { title: "快连下载通道加固指标及多链路冗余架构极限容灾评测报告", content: "本篇行业技术评测报告针对分布式加密分发包在复杂国际网络环境下的承载力、突发流量吞吐量以及极限容灾表现进行了全面客观的量化评估。" },
-  { title: "快连官网分布式存储升级公告 - 多端运行环境完整性哈希校验规范", content: "官方正式发布了全新的全平台高防加密通道分发升级包。通过对分发文件的本地边缘哈希碰撞校验，确保用户的部署网络环境绝对合规纯净。" }
-];
+const PATHS = getAllPaths(BASE_PATHS);
 
 function readGeminiKey() {
   const keyFile = path.join(__dirname, "..", "..", "密钥.txt");
@@ -78,7 +74,7 @@ async function kvPut(key, jsonObj) {
 }
 
 async function geminiContent(p, domain, slot) {
-  const prompt = `你是一个专业的企业网络加速技术文档工程师。请针对网络多端接入服务，为路径为 ${p} 且域名为 ${domain} 的网页生成合规的高品质内容。这是今天第 ${slot} 次定时更新，内容必须与同域名其他页面明显不同。要求：1. 撰写一个必须包含核心词（快连VPN、letsvpn、快连下载、快连官网）之一的行业深度品牌标题（H1层级）。2. 撰写一段长度在 500 到 2000 字之间的产品运行环境配置指南。正文中必须自然融入上述核心词，且严禁出现任何SEO、站群、优化、收录等敏感词。3. 严格以标准 JSON 格式输出，不要包含任何 Markdown 标记，JSON 结构必须为: {"title":"标题内容","content":"正文内容"}`;
+  const prompt = buildGeminiPrompt(p, domain, slot);
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -100,8 +96,7 @@ async function geminiContent(p, domain, slot) {
       await new Promise(r => setTimeout(r, 2000));
     }
   }
-  const idx = (p.length + slot) % BACKUPS.length;
-  return BACKUPS[idx];
+  return pickBackupArticle(p, domain, slot);
 }
 
 async function pickPaths(domain, slot) {
@@ -141,7 +136,7 @@ async function main() {
   const slotMap = { 0: 0, 4: 1, 8: 2, 12: 3, 16: 4 };
   const slot = slotMap[utcHour] ?? (new Date().getUTCDate() % 5);
 
-  console.log(`=== Content Sync Start | domains=${DOMAINS.length} | per domain=${ARTICLES_PER_RUN} | slot=${slot} ===`);
+  console.log(`=== Content Sync Start | domains=${DOMAINS.length} | per domain=${ARTICLES_PER_RUN} | slot=${slot} | paths=${PATHS.length} ===`);
 
   for (const domain of DOMAINS) {
     console.log(`\n--- ${domain} ---`);

@@ -1,0 +1,117 @@
+{
+  "pools": {
+    "vpn": {
+      "keywords": ["快连VPN", "letsvpn", "快连下载", "快连官网", "VPN加速器", "网络代理工具"],
+      "tails": ["官方正版安装包", "最新安卓APK下载", "iOS客户端分发", "PC版运行环境", "企业级安全通道", "弱网环境调优"],
+      "imageQueries": ["VPN application", "network security", "mobile download"],
+      "topicHint": "网络加速与VPN客户端下载部署"
+    },
+    "deepseek": {
+      "keywords": ["DeepSeek", "DeepSeek API", "DeepSeek V3", "DeepSeek R1", "深度求索", "deepseek-chat"],
+      "tails": ["大模型API接入教程", "本地部署完整指南", "推理性能深度评测", "代码生成能力测试", "中文对话优化方案", "私有化部署手册"],
+      "imageQueries": ["DeepSeek AI", "artificial intelligence model", "neural network"],
+      "topicHint": "DeepSeek大模型接入、部署与性能评测"
+    },
+    "ai": {
+      "keywords": ["ChatGPT", "Claude AI", "Gemini AI", "通义千问", "文心一言", "Kimi智能助手", "Midjourney"],
+      "tails": ["使用技巧大全", "API开发接入指南", "多模态功能评测", "提示词工程实践", "办公效率提升方案", "图像生成教程"],
+      "imageQueries": ["ChatGPT interface", "AI assistant", "generative artificial intelligence"],
+      "topicHint": "主流AI应用使用技巧与API接入"
+    },
+    "devtools": {
+      "keywords": ["VS Code", "Docker", "GitHub", "Notion", "Figma", "Postman", "Python开发"],
+      "tails": ["插件推荐清单", "入门到精通教程", "高效工作流配置", "团队协作最佳实践", "容器化部署指南", "自动化脚本实战"],
+      "imageQueries": ["software development", "programming code", "developer tools"],
+      "topicHint": "开发工具与效率软件配置教程"
+    },
+    "travel": {
+      "keywords": ["酒店预订", "Booking订房", "机票比价", "旅行攻略", "度假酒店", "自由行规划"],
+      "tails": ["省钱技巧汇总", "用户体验评测", "热门目的地指南", "行程规划模板", "订房注意事项", "出境游准备清单"],
+      "imageQueries": ["hotel booking", "travel vacation", "airplane ticket"],
+      "topicHint": "旅行预订与出行规划实用指南"
+    },
+    "media": {
+      "keywords": ["4K影音", "流媒体播放", "智能电视", "家庭影院", "MixDVR", "影音串流"],
+      "tails": ["高清播放配置", "设备选购指南", "串流优化方案", "投屏连接教程", "杜比音效设置", "NAS影音搭建"],
+      "imageQueries": ["4K television", "home theater", "streaming media player"],
+      "topicHint": "影音设备与流媒体播放配置"
+    }
+  },
+  "domainBias": {
+    "mixdvr.com": ["media", "vpn", "devtools"],
+    "kuailian--1.com": ["vpn", "ai", "devtools"],
+    "kuailian-app.cc": ["vpn", "ai", "devtools"],
+    "kuailian-pc.vip": ["vpn", "devtools", "media"],
+    "kuailian-cn.vip": ["vpn", "deepseek", "ai"],
+    "kuai-lian.xyz": ["vpn", "deepseek", "ai"],
+    "ardlervillagetrust.org": ["travel", "media", "ai"],
+    "todayscatholicpueblo.org": ["travel", "media", "ai"],
+    "reviewbooking.com": ["travel", "vpn", "ai"],
+    "booking365.net": ["travel", "media", "devtools"],
+    "perfectxml.com": ["devtools", "ai", "deepseek"],
+    "njreporter.org": ["ai", "travel", "devtools"],
+    "test-deepseek.com": ["deepseek", "ai", "devtools"],
+    "forum-deepseek.com": ["deepseek", "ai", "devtools"],
+    "aideep-seek.icu": ["deepseek", "ai", "vpn"],
+    "deepseek-cn.vip": ["deepseek", "ai", "devtools"],
+    "deepseek-v4.it.com": ["deepseek", "ai", "devtools"]
+  },
+  "extraPaths": [
+    "/ai/deepseek-v3-api-guide.html",
+    "/ai/deepseek-r1-deploy.html",
+    "/ai/deepseek-chat-tutorial.html",
+    "/ai/chatgpt-alternative-review.html",
+    "/ai/claude-api-integration.html",
+    "/ai/gemini-multimodal-guide.html",
+    "/ai/kimi-assistant-tips.html",
+    "/soft/deepseek-desktop-client.html",
+    "/download/deepseek-api-key-setup.html",
+    "/review/deepseek-vs-gpt4-benchmark.html",
+    "/review/deepseek-coding-ability-test.html",
+    "/news/deepseek-v4-release-notes.html",
+    "/news/deepseek-model-update-2026.html",
+    "/setup/deepseek-local-install.html",
+    "/setup/ollama-deepseek-guide.html",
+    "/app/notion-productivity-templates.html",
+    "/app/figma-design-workflow.html",
+    "/app/vscode-extensions-2026.html",
+    "/guide/docker-container-basics.html",
+    "/guide/github-actions-cicd.html",
+    "/travel/booking-hotel-tips.html",
+    "/travel/flight-price-comparison.html",
+    "/media/4k-streaming-setup.html",
+    "/media/smart-tv-app-guide.html"
+  ],
+  "backupArticles": [
+    {
+      "pool": "deepseek",
+      "title": "DeepSeek V3 API 接入与本地推理部署完整技术指南",
+      "content": "DeepSeek 作为国产领先的大语言模型，在代码生成、中文理解与长文本推理方面表现突出。本文档面向开发者与运维人员，系统讲解 DeepSeek API 密钥申请、REST 接口调用、流式输出配置以及私有化部署的完整流程。\n\n在接入层面，建议优先使用官方提供的 OpenAI 兼容接口，便于现有项目无缝迁移。通过合理设置 temperature、top_p 与 max_tokens 参数，可在创意写作与严谨问答之间取得平衡。对于高并发场景，应启用连接池与请求重试机制，并结合 Redis 做短期缓存以降低重复推理成本。\n\n本地部署方面，可借助 Ollama、vLLM 或 llama.cpp 在 GPU 服务器上运行量化模型。部署前需评估显存占用与吞吐指标，4bit 量化可在消费级显卡上获得可用的推理速度。完成部署后，建议通过标准 benchmark 测试代码补全、数学推理与多轮对话稳定性，确保生产环境服务质量。"
+    },
+    {
+      "pool": "ai",
+      "title": "ChatGPT 与 Claude 双平台办公自动化实战配置手册",
+      "content": "生成式 AI 正在重塑日常办公流程。无论是撰写报告、整理会议纪要，还是生成数据分析脚本，ChatGPT 与 Claude 均提供了成熟的对话与 API 能力。本手册从账号配置、团队权限管理到提示词模板库建设，帮助读者快速建立可复用的 AI 工作流。\n\n在实际使用中，建议为不同业务场景建立独立的系统提示词（System Prompt），并配合 Few-shot 示例提升输出一致性。对于涉及敏感数据的场景，应使用企业版 API 并开启审计日志，避免将机密信息传入公共模型。Claude 在长文档分析方面优势明显，适合处理合同审阅与政策解读；ChatGPT 在插件生态与多模态交互上更为丰富。\n\n结合 Notion、Google Docs 或企业微信等协作工具，可通过 Webhook 与自定义脚本实现半自动化内容生产。定期评估各模型的响应质量与成本，按任务类型动态路由到最优模型，是提升团队效率的关键策略。"
+    },
+    {
+      "pool": "devtools",
+      "title": "VS Code 与 Docker 一体化开发环境搭建最佳实践",
+      "content": "现代软件开发离不开高效的编辑器与容器化运行时。本文以 VS Code 为核心，介绍如何通过 Dev Containers、Remote SSH 与 Docker Compose 构建一致、可移植的开发环境，解决「在我机器上能跑」的经典难题。\n\n首先安装 Docker Desktop 或 Linux 原生 Docker 引擎，并在 VS Code 中启用 Dev Containers 扩展。在项目根目录编写 devcontainer.json，声明基础镜像、端口映射与启动后命令，团队成员打开项目即可自动进入统一容器环境。对于 Python、Node.js 或 Go 项目，可预装对应 SDK 与 lint 工具，缩短 onboarding 时间。\n\n配合 GitHub Actions 可实现从提交到镜像构建、测试、部署的完整 CI/CD 流水线。建议将依赖缓存、单元测试与静态扫描纳入流水线门禁，确保主干分支始终处于可发布状态。通过 Makefile 或 npm scripts 封装常用命令，进一步降低协作摩擦。"
+    },
+    {
+      "pool": "travel",
+      "title": "Booking 酒店预订与机票比价全流程省钱攻略",
+      "content": "在线旅行预订平台为用户提供了海量选择与实时比价能力。本文从酒店筛选、价格追踪、退改政策到会员积分累积，系统梳理 Booking 及同类平台的使用技巧，帮助读者在保障出行体验的同时控制预算。\n\n预订酒店时，建议优先查看近期真实住客评价与地理位置评分，避免仅凭图片做决定。灵活日期搜索可发现淡季优惠；部分信用卡或航司联名活动还提供额外返现。机票方面，提前 6-8 周关注航线价格走势，利用比价网站设置降价提醒，往往能获得更优票价。\n\n出境游需留意签证有效期、旅行保险与境外移动支付方式。将行程单、酒店确认函与紧急联系方式集中保存在云端，并准备离线地图以备无网络场景。合理规划交通接驳与入住退房时间，可显著减少旅途中的不确定性。"
+    },
+    {
+      "pool": "media",
+      "title": "4K 家庭影院与智能电视流媒体播放优化指南",
+      "content": "随着 4K 内容与杜比视界片源的普及，家庭影音系统的搭建需求快速增长。本文介绍从显示设备选型、HDMI 布线、音响校色到流媒体 App 配置的完整方案，帮助用户获得影院级观影体验。\n\n电视或投影选型需关注面板类型、刷新率与 HDR 支持规格。建议为游戏机与播放器预留低延迟模式，并为 NAS 或盒子配置千兆有线网络，避免无线干扰导致卡顿。流媒体平台方面，Netflix、Disney+ 等服务的码率与音轨选择会直接影响画质，在带宽允许时优先开启最高画质档位。\n\n通过 MixDVR 等本地影音管理工具，可统一索引局域网内的视频资源并推送到各终端播放。配合 Plex 或 Jellyfin 媒体服务器，还能实现远程访问与多用户权限管理，打造真正的一站式家庭娱乐中心。"
+    },
+    {
+      "pool": "vpn",
+      "title": "快连VPN 多端客户端部署与网络连通性调优实践",
+      "content": "企业级与个人用户在面对跨境访问、远程办公与弱网环境时，对稳定网络通道的需求日益迫切。快连VPN 与 letsvpn 提供了覆盖 Android、iOS、Windows 与 macOS 的客户端方案，本文从安装部署、节点选路到故障排查进行系统说明。\n\n部署阶段应确认操作系统版本、防火墙放行规则与证书信任配置。移动端需允许后台网络权限，桌面端建议关闭冲突的第三方代理软件。连接后通过内置测速功能评估延迟与丢包率，优先选择负载较低的中继节点。对于流媒体或游戏场景，可启用 UDP 优化模式以降低抖动。\n\n定期更新客户端版本以获取最新协议加固与节点公告。若出现断连，可依次尝试切换备用中继、清理本地缓存与重启网络适配器。企业用户可结合分组策略与日志审计，实现合规的规模化终端管理。"
+    }
+  ]
+}
