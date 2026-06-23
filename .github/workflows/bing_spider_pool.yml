@@ -48,61 +48,29 @@ jobs:
           python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
         }
 
-        kv_has_content() {
+        kv_get_content() {
           local key="$1"
           local encoded
           encoded="$(kv_key_encode "$key")"
-          local code
-          code=$(curl -sS -o /tmp/kv_check.txt -w "%{http_code}" \
+          curl -sS \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${encoded}" || echo "000")
-          [ "$code" = "200" ] && [ -s /tmp/kv_check.txt ]
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${encoded}" || true
+        }
+
+        kv_delete_key() {
+          local key="$1"
+          local encoded
+          encoded="$(kv_key_encode "$key")"
+          curl -sS -X DELETE \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${encoded}" >/dev/null || true
         }
 
         pick_paths_for_domain() {
           local domain="$1"
           local -n _out=$2
           _out=()
-          local base_index=$(( (10#$DAY_INDEX * 15 + SLOT * ARTICLES_PER_RUN) % ${#PATHS[@]} ))
-          local scan_limit=12
-          local picked_count=0
-          local j=0
-
-          while [ "$picked_count" -lt "$ARTICLES_PER_RUN" ] && [ "$j" -lt "$scan_limit" ]; do
-            local idx=$(( (base_index + j) % ${#PATHS[@]} ))
-            local candidate="${PATHS[$idx]}"
-            local kv_key="content_${domain}_${candidate}"
-            j=$((j + 1))
-
-            if kv_has_content "$kv_key"; then
-              continue
-            fi
-
-            _out+=("$candidate")
-            picked_count=$((picked_count + 1))
-          done
-
-          j=0
-          while [ "$picked_count" -lt "$ARTICLES_PER_RUN" ] && [ "$j" -lt ${#PATHS[@]} ]; do
-            local idx=$(( (base_index + picked_count + j) % ${#PATHS[@]} ))
-            local candidate="${PATHS[$idx]}"
-            j=$((j + 1))
-
-            local duplicate=0
-            local existing
-            for existing in "${_out[@]}"; do
-              if [ "$existing" = "$candidate" ]; then
-                duplicate=1
-                break
-              fi
-            done
-            if [ "$duplicate" -eq 1 ]; then
-              continue
-            fi
-
-            _out+=("$candidate")
-            picked_count=$((picked_count + 1))
-          done
+          mapfile -t _out < <(node scripts/pick-content-paths.js "$domain" "$SLOT" "$ARTICLES_PER_RUN")
         }
 
         UTC_HOUR=$(date -u +%H)
@@ -122,7 +90,7 @@ jobs:
           fi
 
           echo "Processing domain: $DOMAIN"
-          URL_LIST_JSON="[]"
+          URL_LIST_JSON='["https://'"$DOMAIN"'/"]'
           TARGET_HOST="$DOMAIN"
 
           PICKED_PATHS=()
@@ -157,9 +125,14 @@ jobs:
               CONTENT_JSON=$(node scripts/pick-backup-article.js "$p" "$TARGET_HOST" "$SLOT")
             fi
 
-            CONTENT_JSON=$(echo "$CONTENT_JSON" | node scripts/enrich-article-meta.js "$p" "$TARGET_HOST" "$SLOT")
-
             KV_KEY="content_${TARGET_HOST}_${p}"
+            EXISTING_JSON=$(kv_get_content "$KV_KEY")
+            if [ -z "$EXISTING_JSON" ]; then
+              EXISTING_JSON="null"
+            fi
+
+            CONTENT_JSON=$(echo "$CONTENT_JSON" | node scripts/enrich-article-meta.js "$p" "$TARGET_HOST" "$SLOT" "$EXISTING_JSON")
+
             KV_KEY_ENCODED=$(kv_key_encode "$KV_KEY")
 
             CF_RESPONSE=$(curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KV_KEY_ENCODED}" \
@@ -173,7 +146,8 @@ jobs:
               exit 1
             fi
 
-            URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" '. + [$url]')
+            URL_LIST_JSON=$(echo "$URL_LIST_JSON" | jq --arg url "https://${TARGET_HOST}${p}" 'if index($url) then . else . + [$url] end')
+            kv_delete_key "sitemap_cache_${TARGET_HOST}"
             sleep 1
           done
 

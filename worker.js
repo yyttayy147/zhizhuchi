@@ -95,6 +95,8 @@ const SEED_PATHS = [
   ...keywordConfig.extraPaths
 ];
 
+const SEED_PATH_SET = new Set(SEED_PATHS);
+
 // ==================== 2. 主程序核心逻辑 ====================
 export default {
   async fetch(request, env, ctx) {
@@ -130,10 +132,16 @@ export default {
       }
 
       if (url.pathname === "/spider-dashboard-api") {
+        if (!isAdminAuthorized(request, env)) {
+          return new Response("Not Found", { status: 404 });
+        }
         return await handleDashboardApi(env?.SPIDER_STATS_KV, url.searchParams);
       }
 
       if (request.method === "POST" && url.pathname === "/spider-dashboard-view") {
+        if (!isAdminAuthorized(request, env)) {
+          return new Response("Not Found", { status: 404 });
+        }
         if (!env?.SPIDER_STATS_KV) {
           return new Response("KV Namespace Not Bound", { status: 500 });
         }
@@ -153,10 +161,16 @@ export default {
       }
 
       if (url.pathname === "/spider-dashboard-view") {
+        if (!isAdminAuthorized(request, env)) {
+          return new Response("Not Found", { status: 404 });
+        }
         return await renderMultiBotDashboard(env?.SPIDER_STATS_KV, url.hostname);
       }
 
       const currentPath = normalizePath(url.pathname);
+      if (!isValidContentPath(currentPath)) {
+        return new Response("Not Found", { status: 404 });
+      }
       const pathHash = Math.abs(hashCode(currentPath + url.hostname));
 
       if (botType && env?.SPIDER_STATS_KV) {
@@ -183,8 +197,84 @@ export default {
 };
 
 function normalizePath(pathname) {
-  if (!pathname) return "/soft/kuailian-v2.8.5.html";
+  if (!pathname) return "";
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1);
+  }
   return pathname;
+}
+
+function isValidContentPath(pathname) {
+  return SEED_PATH_SET.has(pathname);
+}
+
+function isAdminAuthorized(request, env) {
+  const expected = String(env?.ADMIN_TEST_TOKEN || "mytoken").trim();
+  const provided = new URL(request.url).searchParams.get("test") || "";
+  return provided === expected;
+}
+
+function humanizeContent(text) {
+  let out = String(text || "");
+  const rules = [
+    [/在当今数字化时代[，,]?/g, ""],
+    [/在当今.{0,6}时代[，,]?/g, ""],
+    [/随着.{0,24}的快速发展[，,]?/g, ""],
+    [/综上所述[，,]?/g, ""],
+    [/毋庸置疑[，,]?/g, ""],
+    [/业界领先/g, "表现不错"],
+    [/全方位/g, ""],
+    [/深度融合/g, "结合"],
+    [/极致/g, ""],
+    [/死死坚守/g, "保持在"],
+    [/磐石般/g, ""]
+  ];
+  for (const [pattern, replacement] of rules) {
+    out = out.replace(pattern, replacement);
+  }
+  return out.trim();
+}
+
+function buildKvContentKey(domain, path) {
+  return `content_${getRootDomain(domain)}_${path}`;
+}
+
+function pickFallbackTopic(hostname, currentPath, pathHash) {
+  const seed = Math.abs(hashCode(`${currentPath}|${hostname}|backup|${pathHash}`));
+  const profile = pickKeywordProfile(hostname, seed);
+  const matched = keywordConfig.backupArticles.filter(item => item.pool === profile.poolKey);
+  const list = matched.length ? matched : keywordConfig.backupArticles;
+  const picked = list[seed % list.length];
+  return {
+    title: picked.title,
+    content: humanizeContent(picked.content),
+    fromKv: false
+  };
+}
+
+function getCtaLabel(profile) {
+  const labels = {
+    vpn: "查看下载说明",
+    deepseek: "查看 DeepSeek 详情",
+    ai: "了解更多",
+    devtools: "查看技术文档",
+    travel: "查看预订指南",
+    media: "查看影音配置"
+  };
+  return labels[profile.poolKey] || "查看详情";
+}
+
+function getRelatedDomains(hostname, pathHash) {
+  const root = getRootDomain(hostname);
+  const bias = keywordConfig.domainBias[root] || Object.keys(keywordConfig.pools);
+  const poolKey = bias[Math.abs(pathHash) % bias.length];
+  const related = CONFIG.domainCluster.filter(d => {
+    if (d === root) return false;
+    const domainBias = keywordConfig.domainBias[d] || [];
+    return domainBias.includes(poolKey);
+  });
+  if (related.length >= 2) return related;
+  return CONFIG.domainCluster.filter(d => d !== root).slice(0, 4);
 }
 
 function detectBotType(userAgent) {
@@ -248,11 +338,12 @@ function formatTargetLinksForDisplay(raw) {
 }
 
 async function loadTopic(kv, hostname, currentPath, pathHash) {
-  const fallbackTopic = CONFIG.topics[pathHash % CONFIG.topics.length];
+  const contentDomain = getRootDomain(hostname);
+  const fallbackTopic = pickFallbackTopic(hostname, currentPath, pathHash);
   if (!kv) return fallbackTopic;
 
   try {
-    const kvContentKey = `content_${hostname}_${currentPath}`;
+    const kvContentKey = buildKvContentKey(contentDomain, currentPath);
     const kvContentRaw = await kv.get(kvContentKey);
     const parsedTopic = parseKvContentPayload(kvContentRaw);
 
@@ -269,7 +360,7 @@ async function loadTopic(kv, hostname, currentPath, pathHash) {
     }
   } catch (e) {}
 
-  return { ...fallbackTopic, fromKv: false };
+  return fallbackTopic;
 }
 
 function parseKvContentPayload(raw) {
@@ -345,30 +436,30 @@ function buildContentData(rawTopic, targetLink, pathHash, hostname) {
 
   return {
     ...base,
-    title: `${profile.primary}${profile.tail} - ${rawTopic.title}`,
+    title: rawTopic.title,
     content: injectTargetKeywords(rawTopic.content, targetLink, pathHash, profile)
   };
 }
 
 function buildInnerLinks(hostname, pathHash) {
+  const rootDomain = getRootDomain(hostname);
   const totalInnerLinks = [];
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const pIndex = (pathHash + i) % SEED_PATHS.length;
     const path = SEED_PATHS[pIndex];
     totalInnerLinks.push({
       name: pathToLinkLabel(path),
-      url: `https://${hostname}${path}`
+      url: `https://${rootDomain}${path}`
     });
   }
 
-  const alternativeDomains = CONFIG.domainCluster.filter(d => !hostname.includes(d));
-  for (let i = 0; i < 5; i++) {
-    const targetDomain = alternativeDomains[i % alternativeDomains.length] || "mixdvr.com";
+  const relatedDomains = getRelatedDomains(hostname, pathHash);
+  for (let i = 0; i < 2; i++) {
+    const targetDomain = relatedDomains[i % relatedDomains.length] || "mixdvr.com";
     const pIndex = (pathHash + i + 3) % SEED_PATHS.length;
     const path = SEED_PATHS[pIndex];
-
-    const targetUrl = (pathHash + i) % 3 === 0
+    const targetUrl = i === 0
       ? `https://${targetDomain}/`
       : `https://${targetDomain}${path}`;
 
@@ -489,7 +580,8 @@ async function batchKvGetValues(kv, keys, batchSize = 25) {
 
 async function loadDomainArticles(kv, hostname, paths) {
   if (!kv) return new Map();
-  const keys = paths.map(p => `content_${hostname}_${p}`);
+  const contentDomain = getRootDomain(hostname);
+  const keys = paths.map(p => buildKvContentKey(contentDomain, p));
   const vals = await batchKvGetValues(kv, keys);
   const map = new Map();
   for (let i = 0; i < paths.length; i++) {
@@ -530,7 +622,21 @@ function formatRfc822(dateStr) {
 }
 
 async function renderDynamicSitemap(domain, kv) {
-  const articles = await loadDomainArticles(kv, domain, SEED_PATHS);
+  const rootDomain = getRootDomain(domain);
+  const cacheKey = `sitemap_cache_${rootDomain}`;
+
+  if (kv) {
+    try {
+      const cached = await kv.get(cacheKey);
+      if (cached) {
+        return new Response(cached, {
+          headers: { "content-type": "application/xml;charset=UTF-8", "cache-control": "public, max-age=3600" }
+        });
+      }
+    } catch (e) {}
+  }
+
+  const articles = await loadDomainArticles(kv, rootDomain, SEED_PATHS);
   let xmlUrls = "";
 
   SEED_PATHS.forEach((path, index) => {
@@ -538,12 +644,20 @@ async function renderDynamicSitemap(domain, kv) {
     const lastmod = article?.updatedAt || article?.publishedAt || defaultLastmodForPath(path);
     const priority = index < 5 ? "1.0" : index < 15 ? "0.9" : "0.8";
     const changefreq = article?.updatedAt ? "weekly" : "monthly";
-    xmlUrls += `  <url>\n    <loc>https://${escapeHtml(domain)}${escapeHtml(path)}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${changefreq}</changefreq>\n    <priority>${priority}</priority>\n  </url>\n`;
+    xmlUrls += `  <url>\n    <loc>https://${escapeHtml(rootDomain)}${escapeHtml(path)}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${changefreq}</changefreq>\n    <priority>${priority}</priority>\n  </url>\n`;
   });
 
-  xmlUrls = `  <url>\n    <loc>https://${escapeHtml(domain)}/</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n${xmlUrls}`;
+  xmlUrls = `  <url>\n    <loc>https://${escapeHtml(rootDomain)}/</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n${xmlUrls}`;
 
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${xmlUrls}</urlset>`, {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${xmlUrls}</urlset>`;
+
+  if (kv) {
+    try {
+      await kv.put(cacheKey, xml, { expirationTtl: 3600 });
+    } catch (e) {}
+  }
+
+  return new Response(xml, {
     headers: { "content-type": "application/xml;charset=UTF-8", "cache-control": "public, max-age=3600" }
   });
 }
@@ -567,13 +681,12 @@ async function renderRssFeed(domain, kv) {
     .slice(0, 20);
 
   const fallback = ranked.length ? ranked : scanPaths.slice(0, 10).map(path => {
-    const profile = pickKeywordProfile(domain, Math.abs(hashCode(path)));
-    const topic = CONFIG.topics[Math.abs(hashCode(path)) % CONFIG.topics.length];
+    const fallbackTopic = pickFallbackTopic(domain, path, Math.abs(hashCode(path)));
     return {
       path,
       article: {
-        title: `${profile.primary} - ${topic.title}`,
-        content: topic.content,
+        title: fallbackTopic.title,
+        content: fallbackTopic.content,
         updatedAt: defaultLastmodForPath(path)
       }
     };
@@ -614,9 +727,9 @@ async function renderHomePage(hostname, kv, pathHash) {
     for (const p of scanPaths) {
       if (latest.length >= 12) break;
       if (articles.has(p)) continue;
-      const profile = pickKeywordProfile(hostname, Math.abs(hashCode(p)));
+      const fallbackTopic = pickFallbackTopic(hostname, p, Math.abs(hashCode(p)));
       latest.push([p, {
-        title: `${profile.primary} - ${pathToLinkLabel(p)}`,
+        title: fallbackTopic.title,
         updatedAt: defaultLastmodForPath(p)
       }]);
     }
@@ -759,7 +872,7 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
     .join("");
 
   const ctaClass = variant.cta === "outline" ? "btn btn-outline" : variant.cta === "block" ? "btn btn-block" : "btn";
-  const ctaHtml = `<a href="${safeTargetLink}" class="${ctaClass}" rel="nofollow">进入官方分发端</a>`;
+  const ctaHtml = `<a href="${safeTargetLink}" class="${ctaClass}" rel="nofollow">${escapeHtml(getCtaLabel(profile))}</a>`;
 
   const siteHeaderHtml = `<header class="site-header"><a class="site-brand" href="/"><span class="site-logo">${logoText}</span><span class="site-meta"><strong class="site-name">${siteName}</strong><span class="site-tagline">${siteTagline}</span></span></a></header>`;
 
@@ -778,7 +891,7 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
   if (variant.links === "grid") {
     linksPanelHtml = `<div class="category-box link-grid">${linkGridHtml}</div>`;
   } else if (variant.links === "columns") {
-    linksPanelHtml = `<div class="link-columns"><div class="category-box"><h3>相关技术文档</h3><ul>${totalInnerLinks.slice(0, 5).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div><div class="category-box"><h3>推荐阅读</h3><ul>${totalInnerLinks.slice(5, 10).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div></div>`;
+    linksPanelHtml = `<div class="link-columns"><div class="category-box"><h3>相关技术文档</h3><ul>${totalInnerLinks.slice(0, 4).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div><div class="category-box"><h3>推荐阅读</h3><ul>${totalInnerLinks.slice(4, 8).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div></div>`;
   } else if (variant.links === "compact") {
     linksPanelHtml = `<div class="category-box compact-links"><h3>相关资源</h3><ul>${totalInnerLinks.slice(0, 8).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div>`;
   } else {
@@ -1075,6 +1188,7 @@ body{font-family:sans-serif;background:#f8fafc;padding:40px;color:#1e293b}.box{m
 <div id="botModal" class="modal-mask" onclick="closeBotDetails()"><div class="modal" onclick="event.stopPropagation()"><h2 id="modalTitle"></h2><div id="modalBody" class="loading">加载中...</div><button class="btn-save" onclick="closeBotDetails()">关闭</button></div></div>
 <script>
 const botNames={baidu:"百度蜘蛛",google:"谷歌蜘蛛",bing:"必应蜘蛛"};
+const adminQuery=window.location.search||"";
 function safeText(s){const map={"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"};return String(s||"").replace(/[&<>"']/g,function(m){return map[m]})}
 async function showBotDetails(date,bot,count){
  document.getElementById("modalTitle").innerText=date+" "+(botNames[bot]||"蜘蛛")+" URL 明细";
@@ -1082,7 +1196,7 @@ async function showBotDetails(date,bot,count){
  document.getElementById("botModal").style.display="flex";
  if(count<=0){document.getElementById("modalBody").innerHTML='<div class="loading">当天暂无该蜘蛛访问记录。</div>';return}
  try{
-  const res=await fetch('/spider-dashboard-api?date='+encodeURIComponent(date)+'&bot='+encodeURIComponent(bot));
+  const res=await fetch('/spider-dashboard-api?date='+encodeURIComponent(date)+'&bot='+encodeURIComponent(bot)+adminQuery.replace('?','&'));
   const data=await res.json();
   const rows=data.rows||[];
   if(!rows.length){document.getElementById("modalBody").innerHTML='<div class="loading">统计共 '+count+' 次，但暂无 URL 明细。</div>';return}
@@ -1095,7 +1209,7 @@ async function saveLinks(){
  if(!val){alert("请至少填写一个网址");return}
  const lines=val.split(/\\r?\\n/).map(function(s){return s.trim()}).filter(Boolean);
  if(!lines.length){alert("请至少填写一个网址");return}
- const res=await fetch(window.location.pathname,{method:"POST",body:val,headers:{"Content-Type":"text/plain;charset=UTF-8"}});
+ const res=await fetch(window.location.pathname+adminQuery,{method:"POST",body:val,headers:{"Content-Type":"text/plain;charset=UTF-8"}});
  const msg=await res.text();
  alert(res.ok?"目标分发外链全球同步成功！":(msg||"操作失败"));
 }

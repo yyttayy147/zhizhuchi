@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
 const { buildGeminiPrompt, pickBackupArticle, getAllPaths, humanizeContent } = require("./keyword-utils");
+const { kvGetValue, kvDeleteValue, contentKvKey, sitemapCacheKey } = require("./kv-api");
 
 const CF_ACCOUNT_ID = "6b7c6e17c84b141e12bb8cae44579ca3";
 const CF_KV_NAMESPACE_ID = "535c3b6d9bab4acfa5445e9ad854aec4";
@@ -52,7 +54,7 @@ function readCfToken() {
 const GEMINI_API_KEY = readGeminiKey();
 const CF_TOKEN = readCfToken();
 
-function enrichArticle(article, p, domain, slot) {
+function enrichArticle(article, p, domain, slot, existing = null) {
   const today = new Date().toISOString().split("T")[0];
   const types = ["tutorial", "review", "faq", "news"];
   const authors = ["编辑部", "技术组", "小李", "评测君", "运维笔记"];
@@ -60,21 +62,15 @@ function enrichArticle(article, p, domain, slot) {
   return {
     title: String(article.title || "").trim(),
     content: humanizeContent(String(article.content || "").trim()),
-    author: article.author || authors[seed % authors.length],
-    articleType: article.articleType || types[seed % types.length],
-    publishedAt: article.publishedAt || today,
+    author: existing?.author || article.author || authors[seed % authors.length],
+    articleType: existing?.articleType || article.articleType || types[seed % types.length],
+    publishedAt: existing?.publishedAt || article.publishedAt || today,
     updatedAt: today
   };
 }
 
 function encodeKey(key) {
   return encodeURIComponent(key);
-}
-
-async function kvHasContent(key) {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${encodeKey(key)}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${CF_TOKEN}` } });
-  return res.status === 200;
 }
 
 async function kvPut(key, jsonObj) {
@@ -114,23 +110,14 @@ async function geminiContent(p, domain, slot) {
   return pickBackupArticle(p, domain, slot);
 }
 
-async function pickPaths(domain, slot) {
-  const picked = [];
-  const dayIndex = Math.floor((Date.now() / 86400000 + 719528) % 365) || new Date().getUTCDate();
-  const base = (dayIndex * 15 + slot * ARTICLES_PER_RUN) % PATHS.length;
-
-  for (let j = 0; j < 12 && picked.length < ARTICLES_PER_RUN; j++) {
-    const p = PATHS[(base + j) % PATHS.length];
-    const key = `content_${domain}_${p}`;
-    if (!(await kvHasContent(key)) && !picked.includes(p)) picked.push(p);
-  }
-
-  for (let j = 0; j < PATHS.length && picked.length < ARTICLES_PER_RUN; j++) {
-    const p = PATHS[(base + picked.length + j) % PATHS.length];
-    if (!picked.includes(p)) picked.push(p);
-  }
-
-  return picked;
+function pickPaths(domain, slot) {
+  process.env.CF_ACCOUNT_ID = CF_ACCOUNT_ID;
+  process.env.CF_KV_NAMESPACE_ID = CF_KV_NAMESPACE_ID;
+  process.env.CF_API_TOKEN = CF_TOKEN;
+  const out = execSync(`node "${path.join(__dirname, "pick-content-paths.js")}" "${domain}" "${slot}" "${ARTICLES_PER_RUN}"`, {
+    encoding: "utf8"
+  });
+  return out.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
 
 async function indexNow(domain, urls) {
@@ -155,15 +142,21 @@ async function main() {
 
   for (const domain of DOMAINS) {
     console.log(`\n--- ${domain} ---`);
-    const paths = await pickPaths(domain, slot);
-    const urls = [];
+    const paths = pickPaths(domain, slot);
+    const urls = [`https://${domain}/`];
 
     for (const p of paths) {
       console.log(`Generating https://${domain}${p}`);
+      const kvKey = contentKvKey(domain, p);
+      const existingRaw = await kvGetValue(CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, CF_TOKEN, kvKey);
+      let existing = null;
+      if (existingRaw) {
+        try { existing = JSON.parse(existingRaw); } catch (e) {}
+      }
       const raw = await geminiContent(p, domain, slot);
-      const content = enrichArticle(raw, p, domain, slot);
-      const kvKey = `content_${domain}_${p}`;
+      const content = enrichArticle(raw, p, domain, slot, existing);
       await kvPut(kvKey, content);
+      await kvDeleteValue(CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, CF_TOKEN, sitemapCacheKey(domain));
       urls.push(`https://${domain}${p}`);
       await new Promise(r => setTimeout(r, 1000));
     }
