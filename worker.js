@@ -274,7 +274,7 @@ function buildInnerLinks(hostname, pathHash) {
     const randAttr = CONFIG.tailAttributes[(pathHash + i + 1) % CONFIG.tailAttributes.length];
 
     totalInnerLinks.push({
-      name: `站内：${randCore}${randAttr}`,
+      name: `${randCore}${randAttr}`,
       url: `https://${hostname}${SEED_PATHS[pIndex]}`
     });
   }
@@ -291,7 +291,7 @@ function buildInnerLinks(hostname, pathHash) {
       : `https://${targetDomain}${SEED_PATHS[pIndex]}`;
 
     totalInnerLinks.push({
-      name: `跨域：${randCore}${randAttr}`,
+      name: `${randCore}${randAttr}`,
       url: targetUrl
     });
   }
@@ -485,11 +485,11 @@ function renderSuperSeoPage(currentPath, data, targetLink, totalInnerLinks, path
   if (variant.links === "grid") {
     linksPanelHtml = `<div class="category-box link-grid">${linkGridHtml}</div>`;
   } else if (variant.links === "columns") {
-    linksPanelHtml = `<div class="link-columns"><div class="category-box"><h3>站内索引</h3><ul>${totalInnerLinks.slice(0, 5).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div><div class="category-box"><h3>跨域推荐</h3><ul>${totalInnerLinks.slice(5, 10).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div></div>`;
+    linksPanelHtml = `<div class="link-columns"><div class="category-box"><h3>相关技术文档</h3><ul>${totalInnerLinks.slice(0, 5).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div><div class="category-box"><h3>推荐阅读</h3><ul>${totalInnerLinks.slice(5, 10).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div></div>`;
   } else if (variant.links === "compact") {
     linksPanelHtml = `<div class="category-box compact-links"><h3>相关资源</h3><ul>${totalInnerLinks.slice(0, 8).map(item => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join("")}</ul></div>`;
   } else {
-    linksPanelHtml = `<div class="category-box"><h3>联合推荐网络</h3><ul>${linkListHtml}</ul></div>`;
+    linksPanelHtml = `<div class="category-box"><h3>相关资源导航</h3><ul>${linkListHtml}</ul></div>`;
   }
 
   const sidePanel = `<aside class="side-panel"><div class="side-cta">${ctaHtml}</div>${linksPanelHtml}</aside>`;
