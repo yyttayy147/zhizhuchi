@@ -5,6 +5,19 @@ on:
     - cron: "0 0 * * *"   # 北京时间 08:00
     - cron: "0 12 * * *"  # 北京时间 20:00
   workflow_dispatch:
+    inputs:
+      fill_missing:
+        description: "只补齐 KV 里缺失的文章，不覆盖已有文章"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      limit_per_domain:
+        description: "每个域名最多补多少篇，0 表示补满"
+        required: false
+        default: "0"
 
 jobs:
   content-sync:
@@ -13,7 +26,20 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    - name: Fill Missing Articles Without Overwriting Existing KV
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.fill_missing == 'true' }}
+      env:
+        CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+        CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        DOMAINS: ${{ secrets.TARGET_DOMAINS }}
+        BING_INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
+        LIMIT_PER_DOMAIN: ${{ inputs.limit_per_domain }}
+        ENABLE_INDEXNOW: "true"
+      run: node scripts/fill-missing-content.js
+
     - name: Generate Articles Per Domain And Write KV
+      if: ${{ github.event_name != 'workflow_dispatch' || inputs.fill_missing != 'true' }}
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

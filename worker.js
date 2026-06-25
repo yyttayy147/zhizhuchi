@@ -113,11 +113,16 @@ export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
-      const canonicalRedirect = maybeCanonicalRedirect(request);
-      if (canonicalRedirect) return canonicalRedirect;
-
       const rootDomain = getRootDomain(url.hostname);
       const botType = detectBotType(request.headers.get("user-agent") || "");
+      const canonicalRedirect = maybeCanonicalRedirect(request);
+      if (canonicalRedirect) {
+        if (botType && env?.SPIDER_STATS_KV) {
+          ctx.waitUntil(recordSpiderVisit(env.SPIDER_STATS_KV, url, normalizeVisitPath(url.pathname), botType, rootDomain));
+        }
+        return canonicalRedirect;
+      }
+
       const INDEXNOW_KEY = env?.BING_INDEXNOW_KEY || CONFIG.defaultIndexNowKey;
 
       if (url.pathname === `/${INDEXNOW_KEY}.txt`) {
@@ -229,6 +234,11 @@ function normalizePath(pathname) {
     return pathname.slice(0, -1);
   }
   return pathname;
+}
+
+function normalizeVisitPath(pathname) {
+  const normalized = normalizePath(pathname);
+  return normalized || "/";
 }
 
 function isValidContentPath(pathname) {
@@ -487,7 +497,7 @@ function buildInnerLinks(hostname, pathHash) {
 
 async function recordSpiderVisit(kv, url, currentPath, botType, rootDomain) {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getChinaDateString();
     const timestamp = Date.now();
     const canonicalHost = rootDomain || getRootDomain(url.hostname);
 
@@ -1089,9 +1099,23 @@ function renderSuperSeoPage(hostname, currentPath, data, targetLink, totalInnerL
 
 // ==================== 5. 三合一蜘蛛统计控制面板（懒加载优化） ====================
 const KV_GET_BATCH_SIZE = 25;
-const DASHBOARD_HIST_KEY_LIMIT = 1200;
+const DASHBOARD_DAYS = 30;
+const DASHBOARD_DAY_KEY_LIMIT = 500;
 const DASHBOARD_LIVE_KEY_LIMIT = 80;
 const DASHBOARD_DETAIL_KEY_LIMIT = 200;
+
+function getChinaDateString(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(date);
+}
+
+function getRecentDateStrings(days = DASHBOARD_DAYS) {
+  const dates = [];
+  const anchor = new Date();
+  for (let i = 0; i < days; i++) {
+    dates.push(getChinaDateString(new Date(anchor.getTime() - i * 86400000)));
+  }
+  return dates;
+}
 
 async function batchKvGet(kv, keyRows, batchSize = KV_GET_BATCH_SIZE) {
   const names = keyRows.map(key => (typeof key === "string" ? key : key.name));
@@ -1138,19 +1162,32 @@ async function listKeys(kv, prefix, maxKeys) {
 
 async function loadDailyStats(kv) {
   const dailyStats = {};
-  const histKeys = await listKeys(kv, "v2log_", DASHBOARD_HIST_KEY_LIMIT);
+  const dates = getRecentDateStrings();
+  const PARALLEL_DAYS = 10;
 
-  if (histKeys.length === 0) return dailyStats;
+  for (let offset = 0; offset < dates.length; offset += PARALLEL_DAYS) {
+    const chunk = dates.slice(offset, offset + PARALLEL_DAYS);
+    const keyGroups = await Promise.all(
+      chunk.map(date => listKeys(kv, `v2log_${date}_`, DASHBOARD_DAY_KEY_LIMIT))
+    );
 
-  const vals = await batchKvGet(kv, histKeys);
-  for (let i = 0; i < histKeys.length; i++) {
-    const parsed = parseV2LogKey(histKeys[i].name);
-    if (!parsed) continue;
+    for (let i = 0; i < chunk.length; i++) {
+      const date = chunk[i];
+      const histKeys = keyGroups[i];
+      if (histKeys.length === 0) continue;
 
-    const val = Number(vals[i] || 0);
-    if (!dailyStats[parsed.date]) dailyStats[parsed.date] = { baidu: 0, google: 0, bing: 0 };
-    if (dailyStats[parsed.date][parsed.bot] !== undefined) {
-      dailyStats[parsed.date][parsed.bot] += val;
+      if (!dailyStats[date]) dailyStats[date] = { baidu: 0, google: 0, bing: 0 };
+      const vals = await batchKvGet(kv, histKeys);
+
+      for (let j = 0; j < histKeys.length; j++) {
+        const parsed = parseV2LogKey(histKeys[j].name);
+        if (!parsed) continue;
+
+        const val = Number(vals[j] || 0);
+        if (dailyStats[parsed.date][parsed.bot] !== undefined) {
+          dailyStats[parsed.date][parsed.bot] += val;
+        }
+      }
     }
   }
 
@@ -1255,6 +1292,8 @@ async function renderMultiBotDashboard(kv, hostname) {
     try {
       const dailyStats = await loadDailyStats(kv);
       const liveRows = await loadLiveRows(kv);
+      const today = getChinaDateString();
+      if (!dailyStats[today]) dailyStats[today] = { baidu: 0, google: 0, bing: 0 };
       const dailyDates = Object.keys(dailyStats).sort().reverse().slice(0, 30);
 
       if (dailyDates.length > 0) {
@@ -1282,7 +1321,7 @@ async function renderMultiBotDashboard(kv, hostname) {
 body{font-family:sans-serif;background:#f8fafc;padding:40px;color:#1e293b}.box{max-width:1100px;margin:0 auto 30px;background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,.03)}textarea{width:100%;height:140px;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-family:monospace;line-height:1.6}.btn-save{background:#2563eb;color:#fff;padding:10px 24px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;margin-top:10px}table{width:100%;border-collapse:collapse;margin-top:15px}th,td{padding:12px;text-align:left;border-bottom:1px solid #e2e8f0;font-size:14px}.bot-btn{border:none;border-radius:6px;padding:7px 12px;color:#fff;font-weight:bold;cursor:pointer}.baidu{background:#16a34a}.google{background:#d97706}.bing{background:#0284c7}.modal-mask{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:999;align-items:center;justify-content:center}.modal{width:min(900px,90vw);max-height:80vh;overflow:auto;background:#fff;border-radius:12px;padding:24px}.url-item{padding:10px;border-bottom:1px solid #e2e8f0;font-family:monospace;word-break:break-all}.muted{color:#64748b;font-size:13px;margin-top:6px}.loading{padding:20px;color:#64748b}
 </style></head><body>
 <div class="box"><h2>数据分发目标外链配置中心</h2><div class="muted">当前面板域名：${escapeHtml(hostname)} | 一行填写一个网址，无需引号和逗号</div><textarea id="linksInput" placeholder="https://kuailian-letsv.com/&#10;https://kuailalian.com/">${currentLinksText}</textarea><button class="btn-save" onclick="saveLinks()">更新配置数据</button></div>
-<div class="box"><h2>每日蜘蛛统计总览</h2><table><thead><tr><th>日期</th><th>百度蜘蛛</th><th>谷歌蜘蛛</th><th>必应蜘蛛</th><th>总次数</th></tr></thead><tbody>${dailyRowsHtml}</tbody></table></div>
+<div class="box"><h2>每日蜘蛛统计总览</h2><div class="muted">统计时区：北京时间 (UTC+8)，当天 0 点起算</div><table><thead><tr><th>日期</th><th>百度蜘蛛</th><th>谷歌蜘蛛</th><th>必应蜘蛛</th><th>总次数</th></tr></thead><tbody>${dailyRowsHtml}</tbody></table></div>
 <div class="box" style="border:2px solid #22c55e;"><h2 style="color:#16a34a;">实时蜘蛛流量（最近 5 分钟）</h2><table><thead><tr><th>触发时间</th><th>节点</th><th>蜘蛛</th><th>URL 路径</th></tr></thead><tbody>${liveRowsHtml}</tbody></table></div>
 <div id="botModal" class="modal-mask" onclick="closeBotDetails()"><div class="modal" onclick="event.stopPropagation()"><h2 id="modalTitle"></h2><div id="modalBody" class="loading">加载中...</div><button class="btn-save" onclick="closeBotDetails()">关闭</button></div></div>
 <script>
